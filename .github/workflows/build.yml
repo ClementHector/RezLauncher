@@ -28,11 +28,11 @@ jobs:
         with:
           workspaces: './src-tauri -> target'
 
-      - name: Install dependencies (Ubuntu only)
-        if: matrix.platform == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libappindicator3-dev librsvg2-dev patchelf
+    - name: Install dependencies (CentOS only)
+      if: matrix.platform == 'centos-latest'
+      run: |
+        sudo yum update -y
+        sudo yum install -y gtk3-devel webkit2gtk3-devel libappindicator-gtk3-devel librsvg2-devel patchelf
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
