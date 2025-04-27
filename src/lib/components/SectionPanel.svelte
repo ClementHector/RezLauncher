@@ -20,7 +20,7 @@
   // Event handlers with default implementations
   export let onLoad = (name: string) => {};
   export let onRevert = (name: string) => {};
-  export let onBake = (name: string) => {};
+  export const onBake = (name: string) => {}; // Changed from 'export let' to 'export const'
   export let onEdit = (name: string) => {};
   export let onCreate = () => {};
   export let onClick = (item: any) => {};
@@ -38,9 +38,9 @@
   }
 
   // Handle item click with event stopping for nested buttons
-  function handleItemClick(item, event) {
+  function handleItemClick(item: any, event: MouseEvent) {
     // Don't trigger if clicked on a button inside the item
-    if (event.target.tagName === 'BUTTON') {
+    if (event.target && (event.target as HTMLElement).tagName === 'BUTTON') {
       return;
     }
 
@@ -86,9 +86,9 @@
       // Notify any listeners
       dispatch('bake-complete', { success: true, data: bakeData });
 
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Error saving stage:', error);
-      dispatch('bake-complete', { success: false, error: error.toString() });
+      dispatch('bake-complete', { success: false, error: error instanceof Error ? error.message : String(error) });
     }
   }
 
