@@ -39,8 +39,8 @@ jobs:
         with:
           workspaces: './src-tauri -> target'
 
-      - name: Install dependencies (CentOS only)
-        if: matrix.platform == 'ubuntu-20.04'
+      - name: Install dependencies (Ubuntu only)
+        if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libappindicator3-dev librsvg2-dev patchelf
