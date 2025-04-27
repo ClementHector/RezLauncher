@@ -1,0 +1,7 @@
+{
+  "svelte.enable-ts-plugin": true,
+  "cSpell.words": [
+    "rezlauncher",
+    "tauri"
+  ]
+}
