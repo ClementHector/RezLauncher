@@ -28,11 +28,11 @@ jobs:
         with:
           workspaces: './src-tauri -> target'
 
-    - name: Install dependencies (CentOS only)
-      if: matrix.platform == 'centos-latest'
-      run: |
-        sudo yum update -y
-        sudo yum install -y gtk3-devel webkit2gtk3-devel libappindicator-gtk3-devel librsvg2-devel patchelf
+      - name: Install dependencies (CentOS only)
+        if: matrix.platform == 'centos-latest'
+        run: |
+          sudo yum update -y
+          sudo yum install -y gtk3-devel webkit2gtk3-devel libappindicator-gtk3-devel librsvg2-devel patchelf
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
