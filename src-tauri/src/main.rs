@@ -1,8 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use mongodb::{Client, options::ClientOptions};
-use mongodb::bson::doc;
-use serde::{Deserialize, Serialize};
+use mongodb::{Client, options::ClientOptions, Collection, Database};
+use mongodb::bson::{doc, oid::ObjectId};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use chrono::Utc;
 use std::sync::Mutex;
 use std::fs::{OpenOptions, File};
@@ -11,6 +11,10 @@ use tauri::State;
 use tauri::Manager;
 use futures::stream::StreamExt;
 use tokio::sync::Mutex as TokioMutex;
+
+// Application constants
+const DB_NAME: &str = "rez_launcher";
+const MONGO_URI: &str = "mongodb://localhost:27017";
 
 // MongoDB connection struct
 struct MongoConnection(TokioMutex<Option<Client>>);
@@ -49,7 +53,7 @@ struct PackageCollectionResult {
     collections: Option<Vec<PackageCollection>>,
 }
 
-// Helper function to get MongoDB client
+// Helper functions for MongoDB operations
 async fn get_mongo_client(
     mongo_state: &State<'_, MongoConnection>,
     log_state: &State<'_, LogState>,
@@ -71,6 +75,54 @@ async fn get_mongo_client(
     }
 }
 
+async fn get_db(
+    mongo_state: &State<'_, MongoConnection>,
+    log_state: &State<'_, LogState>,
+) -> Result<Database, String> {
+    let client = get_mongo_client(mongo_state, log_state).await?;
+    Ok(client.database(DB_NAME))
+}
+
+async fn get_collection<T>(
+    mongo_state: &State<'_, MongoConnection>,
+    log_state: &State<'_, LogState>,
+    collection_name: &str,
+) -> Result<Collection<T>, String>
+where
+    T: DeserializeOwned + Serialize + Send + Sync + Unpin,
+{
+    let db = get_db(mongo_state, log_state).await?;
+    Ok(db.collection::<T>(collection_name))
+}
+
+// Generic function to fetch documents from MongoDB
+async fn fetch_documents<T, F>(
+    collection: Collection<T>,
+    filter: F,
+    log_state: &State<'_, LogState>,
+    log_msg_prefix: &str,
+) -> Result<Vec<T>, String>
+where
+    T: DeserializeOwned + Send + Sync + Unpin,
+    F: Into<Option<mongodb::bson::Document>>,
+{
+    let mut cursor = collection
+        .find(filter, None)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut documents = Vec::new();
+    while let Some(result) = cursor.next().await {
+        match result {
+            Ok(document) => documents.push(document),
+            Err(e) => log_message(log_state, format!("Error fetching document: {}", e)),
+        }
+    }
+
+    log_message(log_state, format!("{}: {}", log_msg_prefix, documents.len()));
+    Ok(documents)
+}
+
 // Initialize MongoDB client
 #[tauri::command]
 async fn init_mongodb(
@@ -83,14 +135,14 @@ async fn init_mongodb(
         return Ok(true);
     }
 
-    let connection_string = "mongodb://localhost:27017";
-    let client_options = ClientOptions::parse(connection_string)
+    let client_options = ClientOptions::parse(MONGO_URI)
         .await
         .map_err(|e| e.to_string())?;
 
     let client = Client::with_options(client_options)
         .map_err(|e| e.to_string())?;
 
+    // Verify connection
     client
         .database("admin")
         .run_command(doc! {"ping": 1}, None)
@@ -110,8 +162,7 @@ async fn save_package_collection(
     mongo_state: State<'_, MongoConnection>,
     log_state: State<'_, LogState>,
 ) -> Result<bool, String> {
-    let client = get_mongo_client(&mongo_state, &log_state).await?;
-    let collection = client.database("rez_launcher").collection::<PackageCollection>("package_collections");
+    let collection = get_collection::<PackageCollection>(&mongo_state, &log_state, "package_collections").await?;
 
     collection
         .insert_one(package_data.clone(), None)
@@ -132,8 +183,7 @@ async fn save_stage_to_mongodb(
     mongo_state: State<'_, MongoConnection>,
     log_state: State<'_, LogState>,
 ) -> Result<bool, String> {
-    let client = get_mongo_client(&mongo_state, &log_state).await?;
-    let collection = client.database("rez_launcher").collection::<Stage>("stages");
+    let collection = get_collection::<Stage>(&mongo_state, &log_state, "stages").await?;
 
     // First, update all existing stages with the same name to set active = false
     let filter = doc! { "name": &stage_data.name };
@@ -168,25 +218,8 @@ async fn get_package_collections(
     mongo_state: State<'_, MongoConnection>,
     log_state: State<'_, LogState>,
 ) -> Result<Vec<PackageCollection>, String> {
-    let client = get_mongo_client(&mongo_state, &log_state).await?;
-    let collection = client.database("rez_launcher").collection::<PackageCollection>("package_collections");
-
-    let mut cursor = collection
-        .find(None, None)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let mut packages = Vec::new();
-    while let Some(result) = cursor.next().await {
-        match result {
-            Ok(document) => packages.push(document),
-            Err(e) => log_message(&log_state, format!("Error fetching package: {}", e)),
-        }
-    }
-
-    log_message(&log_state, format!("Retrieved {} package collections", packages.len()));
-
-    Ok(packages)
+    let collection = get_collection::<PackageCollection>(&mongo_state, &log_state, "package_collections").await?;
+    fetch_documents(collection, None, &log_state, "Retrieved package collections").await
 }
 
 #[tauri::command]
@@ -195,24 +228,15 @@ async fn get_package_collections_by_uri(
     mongo_state: State<'_, MongoConnection>,
     log_state: State<'_, LogState>,
 ) -> Result<PackageCollectionResult, String> {
-    let client = get_mongo_client(&mongo_state, &log_state).await?;
-    let collection = client.database("rez_launcher").collection::<PackageCollection>("package_collections");
-
+    let collection = get_collection::<PackageCollection>(&mongo_state, &log_state, "package_collections").await?;
     let filter = doc! { "uri": &uri };
-    let mut cursor = collection
-        .find(filter, None)
-        .await
-        .map_err(|e| e.to_string())?;
 
-    let mut packages = Vec::new();
-    while let Some(result) = cursor.next().await {
-        match result {
-            Ok(document) => packages.push(document),
-            Err(e) => log_message(&log_state, format!("Error fetching package: {}", e)),
-        }
-    }
-
-    log_message(&log_state, format!("Retrieved {} package collections with URI: {}", packages.len(), uri));
+    let packages = fetch_documents(
+        collection,
+        filter,
+        &log_state,
+        &format!("Retrieved package collections with URI: {}", uri)
+    ).await?;
 
     if packages.is_empty() {
         Ok(PackageCollectionResult {
@@ -234,23 +258,14 @@ async fn get_all_package_collections(
     mongo_state: State<'_, MongoConnection>,
     log_state: State<'_, LogState>,
 ) -> Result<PackageCollectionResult, String> {
-    let client = get_mongo_client(&mongo_state, &log_state).await?;
-    let collection = client.database("rez_launcher").collection::<PackageCollection>("package_collections");
+    let collection = get_collection::<PackageCollection>(&mongo_state, &log_state, "package_collections").await?;
 
-    let mut cursor = collection
-        .find(None, None)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let mut packages = Vec::new();
-    while let Some(result) = cursor.next().await {
-        match result {
-            Ok(document) => packages.push(document),
-            Err(e) => log_message(&log_state, format!("Error fetching package: {}", e)),
-        }
-    }
-
-    log_message(&log_state, format!("Retrieved {} package collections for dropdown population", packages.len()));
+    let packages = fetch_documents(
+        collection,
+        None,
+        &log_state,
+        "Retrieved package collections for dropdown population"
+    ).await?;
 
     if packages.is_empty() {
         Ok(PackageCollectionResult {
@@ -274,8 +289,7 @@ async fn get_package_collection_tools(
     mongo_state: State<'_, MongoConnection>,
     log_state: State<'_, LogState>,
 ) -> Result<Vec<String>, String> {
-    let client = get_mongo_client(&mongo_state, &log_state).await?;
-    let collection = client.database("rez_launcher").collection::<PackageCollection>("package_collections");
+    let collection = get_collection::<PackageCollection>(&mongo_state, &log_state, "package_collections").await?;
 
     let filter = doc! {
         "version": &version,
@@ -306,8 +320,7 @@ async fn get_stages_by_uri(
     mongo_state: State<'_, MongoConnection>,
     log_state: State<'_, LogState>,
 ) -> Result<Vec<Stage>, String> {
-    let client = get_mongo_client(&mongo_state, &log_state).await?;
-    let collection = client.database("rez_launcher").collection::<Stage>("stages");
+    let collection = get_collection::<Stage>(&mongo_state, &log_state, "stages").await?;
 
     // Build filter based on URI and active status
     let mut filter = doc! { "uri": &uri };
@@ -318,23 +331,10 @@ async fn get_stages_by_uri(
         log_message(&log_state, format!("Filtering for active stages with URI: {}", uri));
     }
 
-    let mut cursor = collection
-        .find(filter, None)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let mut stages = Vec::new();
-    while let Some(result) = cursor.next().await {
-        match result {
-            Ok(document) => stages.push(document),
-            Err(e) => log_message(&log_state, format!("Error fetching stage: {}", e)),
-        }
-    }
-
     let filter_status = if active_only.unwrap_or(false) { "active " } else { "" };
-    log_message(&log_state, format!("Retrieved {} {}stages with URI: {}", stages.len(), filter_status, uri));
+    let log_msg = format!("Retrieved {}stages with URI: {}", filter_status, uri);
 
-    Ok(stages)
+    fetch_documents(collection, filter, &log_state, &log_msg).await
 }
 
 #[tauri::command]
@@ -343,28 +343,28 @@ async fn revert_stage(
     mongo_state: State<'_, MongoConnection>,
     log_state: State<'_, LogState>,
 ) -> Result<bool, String> {
-    let client = get_mongo_client(&mongo_state, &log_state).await?;
-    let collection = client.database("rez_launcher").collection::<Stage>("stages");
+    let collection = get_collection::<Stage>(&mongo_state, &log_state, "stages").await?;
 
     // First, get the stage to revert to
-    let filter = doc! { "_id": mongodb::bson::oid::ObjectId::parse_str(&stage_id).map_err(|e| e.to_string())? };
+    let object_id = ObjectId::parse_str(&stage_id).map_err(|e| e.to_string())?;
+    let filter = doc! { "_id": object_id };
     let stage_to_activate = collection
         .find_one(filter, None)
         .await
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "Stage not found".to_string())?;
-    
+
     // Get the stage name and URI
     let stage_name = stage_to_activate.name.clone();
     let stage_uri = stage_to_activate.uri.clone();
-    
+
     log_message(
         &log_state,
         format!("Reverting stage '{}' with URI '{}'", stage_name, stage_uri)
     );
 
     // First, set all stages with the same name to inactive
-    let filter = doc! { 
+    let filter = doc! {
         "name": &stage_name,
         "uri": &stage_uri
     };
@@ -381,7 +381,7 @@ async fn revert_stage(
     );
 
     // Now set the selected stage to active
-    let filter = doc! { "_id": mongodb::bson::oid::ObjectId::parse_str(&stage_id).map_err(|e| e.to_string())? };
+    let filter = doc! { "_id": object_id };
     let update = doc! { "$set": { "active": true } };
 
     collection
@@ -404,34 +404,16 @@ async fn get_stage_history(
     mongo_state: State<'_, MongoConnection>,
     log_state: State<'_, LogState>,
 ) -> Result<Vec<Stage>, String> {
-    let client = get_mongo_client(&mongo_state, &log_state).await?;
-    let collection = client.database("rez_launcher").collection::<Stage>("stages");
+    let collection = get_collection::<Stage>(&mongo_state, &log_state, "stages").await?;
 
     // Find all stages with the same name and URI
-    let filter = doc! { 
+    let filter = doc! {
         "name": &stage_name,
         "uri": &uri
     };
 
-    let mut cursor = collection
-        .find(filter, None)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let mut stages = Vec::new();
-    while let Some(result) = cursor.next().await {
-        match result {
-            Ok(document) => stages.push(document),
-            Err(e) => log_message(&log_state, format!("Error fetching stage: {}", e)),
-        }
-    }
-
-    log_message(
-        &log_state,
-        format!("Retrieved {} stage versions for '{}' with URI '{}'", stages.len(), stage_name, uri)
-    );
-
-    Ok(stages)
+    let log_msg = format!("Retrieved stage versions for '{}' with URI '{}'", stage_name, uri);
+    fetch_documents(collection, filter, &log_state, &log_msg).await
 }
 
 #[tauri::command]
