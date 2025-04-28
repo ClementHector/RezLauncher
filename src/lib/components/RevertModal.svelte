@@ -12,7 +12,7 @@
 
   // Local state
   interface StageVersion {
-    _id: string;
+    _id: { $oid?: string } | string; // Handle both object form and string form of ObjectId
     from_version: string;
     active: boolean;
     created_at: string;
@@ -67,8 +67,22 @@
     }
   }
 
-  function selectStage(stageId: string) {
-    selectedStageId = stageId;
+  // Helper function to extract ObjectId as string regardless of its format
+  function getObjectIdString(id: any): string {
+    if (!id) return '';
+
+    // If id is a string, return it directly
+    if (typeof id === 'string') return id;
+
+    // If id is an object with $oid property (MongoDB extended JSON format)
+    if (id.$oid) return id.$oid;
+
+    // If id is just a plain object, stringify it for debugging
+    return JSON.stringify(id);
+  }
+
+  function selectStage(stageId: any) {
+    selectedStageId = getObjectIdString(stageId);
   }
 
   function handleClose() {
@@ -119,16 +133,17 @@
 
         <div class="stage-list">
           {#each stageVersions as stage}
-            {console.log('Stage _id:', stage._id)}
+            <!-- Extract ObjectId string properly -->
+            {@const idString = getObjectIdString(stage._id)}
             <div
               class="stage-item"
-              class:active={stage._id === selectedStageId}
+              class:active={selectedStageId === idString}
               class:current-active={stage.active}
               on:click={() => selectStage(stage._id)}
               on:keydown={(e) => e.key === 'Enter' && selectStage(stage._id)}
               tabindex="0"
               role="option"
-              aria-selected={stage._id === selectedStageId}
+              aria-selected={selectedStageId === idString}
             >
               <div class="stage-info">
                 <div class="stage-header">

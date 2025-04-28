@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
+  import { invoke } from '@tauri-apps/api/tauri';
 
   // Event dispatcher
   const dispatch = createEventDispatcher();
@@ -13,10 +14,26 @@
 
   // Form state
   let bakeName = '';
+  let currentUsername = '';
+
+  // Fetch username when modal opens
+  $: if (isOpen && !currentUsername) {
+    fetchCurrentUsername();
+  }
 
   // Clear form when not open
   $: if (!isOpen) {
     bakeName = '';
+  }
+
+  // Fetch the current username from the backend
+  async function fetchCurrentUsername() {
+    try {
+      currentUsername = await invoke('get_current_username') as string;
+    } catch (error) {
+      console.error('Error fetching username:', error);
+      currentUsername = 'Unknown';
+    }
   }
 
   // Close modal and dispatch close event
@@ -42,7 +59,7 @@
       rxt_path: '',
       tools: packageTools,
       created_at: new Date().toISOString(),
-      created_by: '',
+      created_by: currentUsername,
       active: true, // Adding the missing 'active' field
     };
 
