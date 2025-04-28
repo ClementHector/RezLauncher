@@ -1,78 +1,106 @@
 # rezLauncher
 
-rezLauncher is a web-based application designed to manage and launch different stages of a production using rezStage. It provides a user-friendly interface to create, manage, and load stages, making it easier for users to work with different environments.
+A modern desktop application for managing Rez packages, stages, and tools in production pipelines. Built with Tauri, Svelte, and MongoDB.
 
-Two modes are available in the web UI: default and developer mode.
+## Overview
 
-## Default Mode
+rezLauncher is a desktop application designed to streamline workflow management in production pipelines. It provides an intuitive interface for managing package collections, stages, and tools across different projects.
 
-The default mode is the standard mode of the web UI. It allows users to navigate through the different stages. In this mode, users can only view the stages stored in MongoDB. Users can select a stage, and the web UI will create the rez environment with the selected stage.
+## Key Features
 
-**Feature:**
-- Load => Load the selected stage and create the rez environment.
+- **Package Collection Management**: Create, view, and manage versioned package collections
+- **Stage Management**: Create stages from package collections and track their history
+- **Tool Loading**: Launch tools associated with package collections or stages
+- **URI-based Navigation**: Navigate through projects, modeling types, and applications with a hierarchical URI system
+- **User Modes**: Switch between Default and Developer modes with different feature sets
+- **Dark/Light Theme**: Toggle between dark and light themes for comfortable viewing in any environment
+- **Logging System**: Built-in logging to track operations and system status
 
-## Developer Mode
+## Prerequisites
 
-The developer mode is the advanced mode of the web UI. This mode allows users to view and manage all stages stored in MongoDB.
+- [MongoDB](https://www.mongodb.com/try/download/community) (running on localhost:27017)
+- [Node.js](https://nodejs.org/) (v16 or higher)
+- [Rust](https://www.rust-lang.org/tools/install) (for Tauri backend)
 
-**Features:**
-- Bake => Bake a new stage and store it in MongoDB. A popup will appear to ask for the name of the new stage. If the name already exists, the previous version will be archived, and the new version will be stored with the provided name.
-- Revert => Revert a stage to a previous version stored in MongoDB. A popup will appear to select the version to revert to. The current version will be replaced by the selected version.
-- Edit => Edit the details of a stage directly in MongoDB.
+## Installation
 
-### UI Design
+1. Clone the repository:
+   ```
+   git clone <repository-url>
+   cd rezLauncher
+   ```
 
-#### Layout in Default Mode
+2. Install dependencies:
+   ```
+   npm install
+   ```
 
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ [RezLauncher Logo]                         Mode: [🔘 Default] [⚪ Developer]│
-│                                                                    [🔘 Dark]│
-│                                                                              │
-├──────────────────────────────────────────────────────────────────────────────┤
-│ [ project ▾] / [ modeling ▾ ] / [ maya ▾ ] / ...                             │
-├─────────────────────────────────────┬────────────────────────────────────────┤
-│                                         │                                    │
-│ ▸ Available Stages                      │               Alias                │
-│ ├─ dev                 [Load]           │                                    │
-│ ├─ beta                [Load]           │     ▸ Maya                [Load]   │
-│                                         │                                    │
-│                                         │     ▸ Rv                  [Load]   │
-│                                         │                                    │
-│                                         │                                    │
-│                                         │                                    │
-│                                         │                                    │
-│                                         │                                    │
-│                                         │                                    │
-│                                         │                                    │
-│                                         │                                    │
-├─────────────────────────────────────────┴────────────────────────────────────┤
-│ Logs / Output :                                                              │
-│                                                                              │
-│                                                                              │
-└──────────────────────────────────────────────────────────────────────────────┘
+3. Ensure MongoDB is running:
+   ```
+   mongod --dbpath <your-data-path>
+   ```
 
-#### Layout in Developer Mode
+4. Build the application:
+   ```
+   npm run tauri build
+   ```
 
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ [RezLauncher Logo]                         Mode: [🔘 Default] [⚪ Developer]│
-│                                                                    [🔘 Dark]│
-│                                                                              │
-├──────────────────────────────────────────────────────────────────────────────┤
-│ [ project ▾] / [ modeling ▾ ] / [ maya ▾ ] / ...                             │
-├─────────────────────────────────────────┬────────────────────────────────────┤
-│                                         │                                    │
-│ ▸ Available Stages                      │                Alias               │
-│ ├─ dev                 [Load] [Revert]  │                                    │
-│ ├─ beta                [Load] [Revert]  │      ▸ Maya             [Load]     │
-│                                         │                                    │
-│ ▸ Available package collection          │      ▸ Rv               [Load]    │
-│ ├─ 0.1.2               [Bake] [Edit]    │                                    │
-│ ├─ ticket#123          [Bake] [Edit]    │                                    │
-│ + Create new package collection         │                                   │
-│                                         │                                    │
-│                                         │                                    │
-├─────────────────────────────────────────┴────────────────────────────────────┤
-│ Logs / Output :                                                              │
-│ [✔] Baked 0.1.2 into dev                                                     │
-│ [⚠] Package modelingTools not found                                         │
-└──────────────────────────────────────────────────────────────────────────────┘
+5. The built application will be available in the `src-tauri/target/release` directory.
+
+## Development
+
+For development, you can run the application in development mode:
+
+```
+npm run tauri dev
+```
+
+This will start the Svelte dev server and launch the Tauri application window.
+
+## Project Structure
+
+- `src/`: Svelte frontend application
+  - `lib/`: Components and type definitions
+  - `routes/`: Svelte routes
+- `src-tauri/`: Rust backend and Tauri configuration
+  - `src/`: Rust source code
+  - `icons/`: Application icons
+
+## Data Models
+
+### Package Collection
+
+A collection of packages with associated tools and version information:
+- Version
+- Packages list
+- Tools list
+- URI path
+- Creation metadata
+
+### Stage
+
+A snapshot of a package collection at a specific point:
+- Name
+- URI
+- From version
+- Rez template path
+- Tools list
+- Active status
+
+## Configuration
+
+The MongoDB connection is configured in `src-tauri/src/main.rs`. By default, it connects to:
+- MongoDB URI: `mongodb://localhost:27017`
+- Database name: `rez_launcher`
+
+## License
+
+<!-- TODO -->
+
+## Credits
+
+Built with:
+- [Tauri](https://tauri.app/) - Desktop application framework
+- [Svelte](https://svelte.dev/) - Frontend framework
+- [MongoDB](https://www.mongodb.com/) - Database
+- [Rust](https://www.rust-lang.org/) - Backend language
