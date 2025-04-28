@@ -36,6 +36,8 @@ struct PackageCollection {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct Stage {
+    #[serde(rename = "_id", skip_serializing_if = "Option::is_none")]
+    id: Option<ObjectId>,
     name: String,
     uri: String,
     from_version: String,

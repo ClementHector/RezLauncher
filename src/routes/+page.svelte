@@ -380,7 +380,7 @@
     const icon = type === "success" ? "✓" :
                 type === "warning" ? "⚠" :
                 type === "error" ? "✕" : "i";
-    logs = [...logs, { message, type, icon }];
+    logs = [{ message, type, icon }, ...logs];
   }
 
   function createNewPackage() {
