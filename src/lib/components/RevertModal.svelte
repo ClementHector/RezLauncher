@@ -11,10 +11,19 @@
   export let stageUri: string = '';
 
   // Local state
-  let stageVersions = [];
-  let selectedStageId = null;
+  interface StageVersion {
+    _id: string;
+    from_version: string;
+    active: boolean;
+    created_at: string;
+    created_by: string;
+    formattedDate?: string;
+  }
+
+  let stageVersions: StageVersion[] = [];
+  let selectedStageId: string | null = null;
   let loading = true;
-  let error = null;
+  let error: string | null = null;
 
   // Reset state when modal closes
   $: if (!isOpen) {
@@ -31,7 +40,7 @@
     error = null;
 
     try {
-      const versions = await invoke('get_stage_history', {
+      const versions = await invoke<StageVersion[]>('get_stage_history', {
         stageName: stageName,
         uri: stageUri
       });
@@ -49,7 +58,7 @@
     }
   }
 
-  function formatDate(dateString) {
+  function formatDate(dateString: string): string {
     try {
       const date = new Date(dateString);
       return date.toLocaleString();
@@ -58,7 +67,7 @@
     }
   }
 
-  function selectStage(stageId) {
+  function selectStage(stageId: string) {
     selectedStageId = stageId;
   }
 
