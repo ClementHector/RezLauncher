@@ -43,6 +43,7 @@
       tools: packageTools,
       created_at: new Date().toISOString(),
       created_by: '',
+      active: true, // Adding the missing 'active' field
     };
 
     dispatch('submit', formData);

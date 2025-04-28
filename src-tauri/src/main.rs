@@ -1,4 +1,3 @@
-// Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use mongodb::{Client, options::ClientOptions};
@@ -19,19 +18,18 @@ struct MongoConnection(TokioMutex<Option<Client>>);
 // App state for logging
 struct LogState(Mutex<File>);
 
-// Package Collection data structure
+// Data structures
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct PackageCollection {
     version: String,
     packages: Vec<String>,
     herit: String,
-    tools: Vec<String>, // Changed from aliases to tools
+    tools: Vec<String>,
     created_at: String,
     created_by: String,
     uri: String,
 }
 
-// Stage data structure
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct Stage {
     name: String,
@@ -44,7 +42,6 @@ struct Stage {
     active: bool,
 }
 
-// Result structure for get_package_collections_by_uri
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct PackageCollectionResult {
     success: bool,
@@ -52,7 +49,7 @@ struct PackageCollectionResult {
     collections: Option<Vec<PackageCollection>>,
 }
 
-// Helper function to get MongoDB client, initializing if needed
+// Helper function to get MongoDB client
 async fn get_mongo_client(
     mongo_state: &State<'_, MongoConnection>,
     log_state: &State<'_, LogState>,
@@ -63,13 +60,10 @@ async fn get_mongo_client(
         return Ok(client.clone());
     }
 
-    // Drop the guard before async operation
     drop(client_guard);
 
-    // Initialize MongoDB
     init_mongodb(mongo_state.clone(), log_state.clone()).await?;
 
-    // Get the initialized client
     let client_guard = mongo_state.0.lock().await;
     match &*client_guard {
         Some(client) => Ok(client.clone()),
@@ -86,10 +80,10 @@ async fn init_mongodb(
     let mut client_opt = mongo_state.0.lock().await;
 
     if client_opt.is_some() {
-        return Ok(true); // Already initialized
+        return Ok(true);
     }
 
-    let connection_string = "mongodb://localhost:27017"; // Configuration should come from a secure source in production
+    let connection_string = "mongodb://localhost:27017";
     let client_options = ClientOptions::parse(connection_string)
         .await
         .map_err(|e| e.to_string())?;
@@ -97,7 +91,6 @@ async fn init_mongodb(
     let client = Client::with_options(client_options)
         .map_err(|e| e.to_string())?;
 
-    // Test connection
     client
         .database("admin")
         .run_command(doc! {"ping": 1}, None)
@@ -110,20 +103,16 @@ async fn init_mongodb(
     Ok(true)
 }
 
-// Save package collection to MongoDB
+// Database operations
 #[tauri::command]
 async fn save_package_collection(
     package_data: PackageCollection,
     mongo_state: State<'_, MongoConnection>,
     log_state: State<'_, LogState>,
 ) -> Result<bool, String> {
-    // Get MongoDB client using helper function
     let client = get_mongo_client(&mongo_state, &log_state).await?;
+    let collection = client.database("rez_launcher").collection::<PackageCollection>("package_collections");
 
-    let db = client.database("rez_launcher");
-    let collection = db.collection::<PackageCollection>("package_collections");
-
-    // Insert the document
     collection
         .insert_one(package_data.clone(), None)
         .await
@@ -137,20 +126,30 @@ async fn save_package_collection(
     Ok(true)
 }
 
-// Save stage to MongoDB
 #[tauri::command]
 async fn save_stage_to_mongodb(
     stage_data: Stage,
     mongo_state: State<'_, MongoConnection>,
     log_state: State<'_, LogState>,
 ) -> Result<bool, String> {
-    // Get MongoDB client using helper function
     let client = get_mongo_client(&mongo_state, &log_state).await?;
+    let collection = client.database("rez_launcher").collection::<Stage>("stages");
 
-    let db = client.database("rez_launcher");
-    let collection = db.collection::<Stage>("stages");
+    // First, update all existing stages with the same name to set active = false
+    let filter = doc! { "name": &stage_data.name };
+    let update = doc! { "$set": { "active": false } };
 
-    // Insert the document
+    collection
+        .update_many(filter, update, None)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    log_message(
+        &log_state,
+        format!("Set active=false for all existing stages with name '{}'", stage_data.name)
+    );
+
+    // Now insert the new stage
     collection
         .insert_one(stage_data.clone(), None)
         .await
@@ -164,19 +163,14 @@ async fn save_stage_to_mongodb(
     Ok(true)
 }
 
-// Get all package collections
 #[tauri::command]
 async fn get_package_collections(
     mongo_state: State<'_, MongoConnection>,
     log_state: State<'_, LogState>,
 ) -> Result<Vec<PackageCollection>, String> {
-    // Get MongoDB client using helper function
     let client = get_mongo_client(&mongo_state, &log_state).await?;
+    let collection = client.database("rez_launcher").collection::<PackageCollection>("package_collections");
 
-    let db = client.database("rez_launcher");
-    let collection = db.collection::<PackageCollection>("package_collections");
-
-    // Find all documents
     let mut cursor = collection
         .find(None, None)
         .await
@@ -195,20 +189,15 @@ async fn get_package_collections(
     Ok(packages)
 }
 
-// Get package collections by URI
 #[tauri::command]
 async fn get_package_collections_by_uri(
     uri: String,
     mongo_state: State<'_, MongoConnection>,
     log_state: State<'_, LogState>,
 ) -> Result<PackageCollectionResult, String> {
-    // Get MongoDB client using helper function
     let client = get_mongo_client(&mongo_state, &log_state).await?;
+    let collection = client.database("rez_launcher").collection::<PackageCollection>("package_collections");
 
-    let db = client.database("rez_launcher");
-    let collection = db.collection::<PackageCollection>("package_collections");
-
-    // Find documents matching the URI
     let filter = doc! { "uri": &uri };
     let mut cursor = collection
         .find(filter, None)
@@ -225,7 +214,6 @@ async fn get_package_collections_by_uri(
 
     log_message(&log_state, format!("Retrieved {} package collections with URI: {}", packages.len(), uri));
 
-    // Return the result with appropriate message if no collections are found
     if packages.is_empty() {
         Ok(PackageCollectionResult {
             success: true,
@@ -241,19 +229,14 @@ async fn get_package_collections_by_uri(
     }
 }
 
-// Get all package collections for dropdown
 #[tauri::command]
 async fn get_all_package_collections(
     mongo_state: State<'_, MongoConnection>,
     log_state: State<'_, LogState>,
 ) -> Result<PackageCollectionResult, String> {
-    // Get MongoDB client using helper function
     let client = get_mongo_client(&mongo_state, &log_state).await?;
+    let collection = client.database("rez_launcher").collection::<PackageCollection>("package_collections");
 
-    let db = client.database("rez_launcher");
-    let collection = db.collection::<PackageCollection>("package_collections");
-
-    // Find all documents
     let mut cursor = collection
         .find(None, None)
         .await
@@ -269,7 +252,6 @@ async fn get_all_package_collections(
 
     log_message(&log_state, format!("Retrieved {} package collections for dropdown population", packages.len()));
 
-    // Return the result with appropriate message if no collections are found
     if packages.is_empty() {
         Ok(PackageCollectionResult {
             success: true,
@@ -285,7 +267,6 @@ async fn get_all_package_collections(
     }
 }
 
-// Get tools for a specific package collection
 #[tauri::command]
 async fn get_package_collection_tools(
     version: String,
@@ -293,15 +274,9 @@ async fn get_package_collection_tools(
     mongo_state: State<'_, MongoConnection>,
     log_state: State<'_, LogState>,
 ) -> Result<Vec<String>, String> {
-    // Get MongoDB client using helper function
     let client = get_mongo_client(&mongo_state, &log_state).await?;
+    let collection = client.database("rez_launcher").collection::<PackageCollection>("package_collections");
 
-    log_message(&log_state, format!("Fetching tools for package collection version: {} uri: {}", version, uri));
-
-    let db = client.database("rez_launcher");
-    let collection = db.collection::<PackageCollection>("package_collections");
-
-    // Find the specific package collection
     let filter = doc! {
         "version": &version,
         "uri": &uri
@@ -324,23 +299,25 @@ async fn get_package_collection_tools(
     }
 }
 
-// Get stages by URI
 #[tauri::command]
 async fn get_stages_by_uri(
     uri: String,
+    active_only: Option<bool>,
     mongo_state: State<'_, MongoConnection>,
     log_state: State<'_, LogState>,
 ) -> Result<Vec<Stage>, String> {
-    // Get MongoDB client using helper function
     let client = get_mongo_client(&mongo_state, &log_state).await?;
+    let collection = client.database("rez_launcher").collection::<Stage>("stages");
 
-    log_message(&log_state, format!("Fetching stages with URI: {}", uri));
+    // Build filter based on URI and active status
+    let mut filter = doc! { "uri": &uri };
 
-    let db = client.database("rez_launcher");
-    let collection = db.collection::<Stage>("stages");
+    // If active_only is provided and true, filter by active status
+    if let Some(true) = active_only {
+        filter.insert("active", true);
+        log_message(&log_state, format!("Filtering for active stages with URI: {}", uri));
+    }
 
-    // Find documents matching the URI
-    let filter = doc! { "uri": &uri };
     let mut cursor = collection
         .find(filter, None)
         .await
@@ -354,12 +331,109 @@ async fn get_stages_by_uri(
         }
     }
 
-    log_message(&log_state, format!("Retrieved {} stages with URI: {}", stages.len(), uri));
+    let filter_status = if active_only.unwrap_or(false) { "active " } else { "" };
+    log_message(&log_state, format!("Retrieved {} {}stages with URI: {}", stages.len(), filter_status, uri));
 
     Ok(stages)
 }
 
-// Get current OS username
+#[tauri::command]
+async fn revert_stage(
+    stage_id: String,
+    mongo_state: State<'_, MongoConnection>,
+    log_state: State<'_, LogState>,
+) -> Result<bool, String> {
+    let client = get_mongo_client(&mongo_state, &log_state).await?;
+    let collection = client.database("rez_launcher").collection::<Stage>("stages");
+
+    // First, get the stage to revert to
+    let filter = doc! { "_id": mongodb::bson::oid::ObjectId::parse_str(&stage_id).map_err(|e| e.to_string())? };
+    let stage_to_activate = collection
+        .find_one(filter, None)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Stage not found".to_string())?;
+    
+    // Get the stage name and URI
+    let stage_name = stage_to_activate.name.clone();
+    let stage_uri = stage_to_activate.uri.clone();
+    
+    log_message(
+        &log_state,
+        format!("Reverting stage '{}' with URI '{}'", stage_name, stage_uri)
+    );
+
+    // First, set all stages with the same name to inactive
+    let filter = doc! { 
+        "name": &stage_name,
+        "uri": &stage_uri
+    };
+    let update = doc! { "$set": { "active": false } };
+
+    collection
+        .update_many(filter, update, None)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    log_message(
+        &log_state,
+        format!("Set active=false for all existing stages with name '{}'", stage_name)
+    );
+
+    // Now set the selected stage to active
+    let filter = doc! { "_id": mongodb::bson::oid::ObjectId::parse_str(&stage_id).map_err(|e| e.to_string())? };
+    let update = doc! { "$set": { "active": true } };
+
+    collection
+        .update_one(filter, update, None)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    log_message(
+        &log_state,
+        format!("Set stage '{}' to active", stage_name)
+    );
+
+    Ok(true)
+}
+
+#[tauri::command]
+async fn get_stage_history(
+    stage_name: String,
+    uri: String,
+    mongo_state: State<'_, MongoConnection>,
+    log_state: State<'_, LogState>,
+) -> Result<Vec<Stage>, String> {
+    let client = get_mongo_client(&mongo_state, &log_state).await?;
+    let collection = client.database("rez_launcher").collection::<Stage>("stages");
+
+    // Find all stages with the same name and URI
+    let filter = doc! { 
+        "name": &stage_name,
+        "uri": &uri
+    };
+
+    let mut cursor = collection
+        .find(filter, None)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut stages = Vec::new();
+    while let Some(result) = cursor.next().await {
+        match result {
+            Ok(document) => stages.push(document),
+            Err(e) => log_message(&log_state, format!("Error fetching stage: {}", e)),
+        }
+    }
+
+    log_message(
+        &log_state,
+        format!("Retrieved {} stage versions for '{}' with URI '{}'", stages.len(), stage_name, uri)
+    );
+
+    Ok(stages)
+}
+
 #[tauri::command]
 fn get_current_username() -> Result<String, String> {
     std::env::var("USERNAME")
@@ -367,7 +441,7 @@ fn get_current_username() -> Result<String, String> {
         .map_err(|e| format!("Failed to get username: {}", e))
 }
 
-// Utility function to log messages
+// Utility functions
 fn log_message(log_state: &State<LogState>, message: String) {
     let mut log_file = match log_state.0.lock() {
         Ok(file) => file,
@@ -384,14 +458,11 @@ fn log_message(log_state: &State<LogState>, message: String) {
         eprintln!("Failed to write to log file: {}", e);
     }
 
-    // Also print to console in debug mode
     #[cfg(debug_assertions)]
     println!("{}", log_entry.trim());
 }
 
-// Initialize log file
 fn init_log_file() -> Result<File, String> {
-    // Utiliser le dossier temporaire du système au lieu d'un dossier fixe
     let temp_dir = std::env::temp_dir();
     let log_dir = temp_dir.join("rezlauncher_logs");
 
@@ -411,7 +482,6 @@ fn init_log_file() -> Result<File, String> {
 }
 
 fn main() {
-    // Initialize log file
     let log_file = match init_log_file() {
         Ok(file) => file,
         Err(e) => {
@@ -420,7 +490,6 @@ fn main() {
         }
     };
 
-    // Initialize MongoDB client
     let mongo_connection = MongoConnection(TokioMutex::new(None));
     let log_state = LogState(Mutex::new(log_file));
 
@@ -437,9 +506,10 @@ fn main() {
             get_all_package_collections,
             get_package_collection_tools,
             get_stages_by_uri,
+            revert_stage,
+            get_stage_history,
         ])
         .setup(|app| {
-            // Initialize MongoDB on startup
             let app_handle = app.handle();
             tauri::async_runtime::spawn(async move {
                 let state = app_handle.state::<MongoConnection>();

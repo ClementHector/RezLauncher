@@ -3,28 +3,27 @@
   import BakeModal from './BakeModal.svelte';
   import { invoke } from '@tauri-apps/api/tauri';
 
-  // Event dispatcher for custom events
   const dispatch = createEventDispatcher();
 
-  // Props with default values
-  export let title: string;                   // Section title
-  export let items: any[] = [];               // Array of items to display
-  export let expandable: boolean = true;      // Whether section can be expanded/collapsed
-  export let showCreateNew: boolean = false;  // Whether to show "Create new" button
-  export let hasBakeEdit: boolean = false;    // Whether to show Bake/Edit buttons
-  export let mode: string = "Default";        // Current mode (Default/Developer)
-  export let isTools: boolean = false;        // Special handling for Tools section
-  export let showLoadButtons: boolean = false; // Whether to show load buttons
-  export let emptyMessage: string = "";       // Message to display when no items are found
+  // Props
+  export let title: string;
+  export let items: any[] = [];
+  export let expandable: boolean = true;
+  export let showCreateNew: boolean = false;
+  export let hasBakeEdit: boolean = false;
+  export let mode: string = "Default";
+  export let isTools: boolean = false;
+  export let showLoadButtons: boolean = false;
+  export let emptyMessage: string = "";
 
-  // Event handlers with default implementations
+  // Event handlers
   export let onLoad = (name: string) => {};
   export let onRevert = (name: string) => {};
-  export const onBake = (name: string) => {}; // Changed from 'export let' to 'export const'
+  export const onBake = (name: string) => {};
   export let onEdit = (name: string) => {};
   export let onCreate = () => {};
   export let onClick = (item: any) => {};
-  export let onRefresh = () => {};           // Function to refresh items list
+  export let onRefresh = () => {};
 
   // State
   let expanded = true;
@@ -32,33 +31,29 @@
   let selectedItem: any = null;
   let packageTools: string[] = [];
 
-  // Toggle expand/collapse
+  // Determine if action buttons should be shown
+  $: showActions = mode === "Developer" || showLoadButtons;
+
   function toggleExpand() {
     expanded = !expanded;
   }
 
-  // Handle item click with event stopping for nested buttons
   function handleItemClick(item: any, event: MouseEvent) {
-    // Don't trigger if clicked on a button inside the item
     if (event.target && (event.target as HTMLElement).tagName === 'BUTTON') {
       return;
     }
-
     onClick(item);
   }
 
-  // Open bake modal
   async function openBakeModal(item: any) {
     selectedItem = item;
 
-    // Only fetch tools if needed for package collections
     if (!isTools && hasBakeEdit) {
       try {
         const result = await invoke('get_package_collection_tools', {
           version: item.version,
           uri: item.uri
         });
-
         packageTools = Array.isArray(result) ? result : [];
       } catch (error) {
         console.error('Error fetching tools for package:', error);
@@ -69,39 +64,29 @@
     showBakeModal = true;
   }
 
-  // Close bake modal
   function closeBakeModal() {
     showBakeModal = false;
     selectedItem = null;
   }
 
-  // Handle bake form submission
   async function handleBakeSubmit(event: CustomEvent) {
     try {
       const bakeData = event.detail;
-
-      // Save to MongoDB using Tauri command
       await invoke('save_stage_to_mongodb', { stageData: bakeData });
-
-      // Notify any listeners
       dispatch('bake-complete', { success: true, data: bakeData });
-
     } catch (error: unknown) {
       console.error('Error saving stage:', error);
-      dispatch('bake-complete', { success: false, error: error instanceof Error ? error.message : String(error) });
+      dispatch('bake-complete', { 
+        success: false, 
+        error: error instanceof Error ? error.message : String(error) 
+      });
     }
   }
 
-  // Handle refreshStages event
   function handleRefreshStages() {
-    // Call the refresh function provided by the parent component
     onRefresh();
-    // Also dispatch an event in case the parent is listening for it
     dispatch('refresh-stages');
   }
-
-  // Determine if we should render action buttons based on mode
-  $: showActions = mode === "Developer" || showLoadButtons;
 </script>
 
 <div class="section-panel">
@@ -147,7 +132,6 @@
               aria-selected={item.active || false}
             >
               {#if isTools}
-                <!-- Tools display -->
                 <div class="tool-item">
                   <span class="item-name">
                     {typeof item === 'string' ? item : item.name}
@@ -165,7 +149,6 @@
                   {/if}
                 </div>
               {:else if hasBakeEdit}
-                <!-- Package Collection display -->
                 <div class="package-item">
                   <span class="item-name">
                     {item.version || item.name}
@@ -203,7 +186,6 @@
                   {/if}
                 </div>
               {:else}
-                <!-- Stage display -->
                 <div class="stage-item">
                   <span class="item-name">{item.name}</span>
                   <div class="action-buttons">
@@ -239,7 +221,6 @@
     </div>
   {/if}
 
-  <!-- Bake Modal -->
   <BakeModal
     isOpen={showBakeModal}
     packageCollectionName={selectedItem?.name || ''}

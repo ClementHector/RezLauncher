@@ -2,36 +2,98 @@
   import { invoke } from "@tauri-apps/api/tauri";
   import SectionPanel from "$lib/components/SectionPanel.svelte";
   import PackageModal from "$lib/components/PackageModal.svelte";
+  import RevertModal from "$lib/components/RevertModal.svelte";
 
   // State management
-  let mode = $state("Developer"); // "Default" or "Developer"
-  let theme = $state("Light"); // "Light" or "Dark"
-  let logs = $state([]); // Array of log messages
-  let packageModalOpen = $state(false); // State for package creation modal
-  let isEditingPackage = $state(false); // State to track if we're editing or creating
-  let currentPackageData = $state(null); // Store the current package being edited
-  let currentUsername = $state(""); // Store the current OS username
-  let packageCollections = $state([]); // Store package collections
-  let packageCollectionMessage = $state(""); // Message when no collections are found
-  let stageMessage = $state(""); // Message when no stages are found
-  let allUris = $state([]); // Store all URIs from MongoDB
+  let mode = $state("Developer");
+  let theme = $state("Light");
 
-  // Message to display when no URI is selected
-  let noUriSelectedMessage = "Select a URI to view stages or package collections";
+  // Define type for log entries
+  type LogEntry = {
+    message: string;
+    type: "info" | "success" | "warning" | "error";
+    icon: string;
+  };
 
-  // URI global variable
-  let currentUri = $state("/project"); // URI global pour toute l'interface
+  let logs = $state<LogEntry[]>([]);
+  let packageModalOpen = $state(false);
+  let revertModalOpen = $state(false); // New state for revert modal
+  let isEditingPackage = $state(false);
+  let currentPackageData = $state<PackageCollection | null>(null);
+  let currentStageName = $state(""); // New state for storing current stage name
+  let currentStageUri = $state(""); // New state for storing current stage URI
+  let currentUsername = $state("");
+  let packageCollections = $state<PackageCollection[]>([]);
+  let packageCollectionMessage = $state("");
+  let stageMessage = $state("");
+  let allUris = $state<string[]>([]);
+
+  // Define types for our data structures
+  type Package = {
+    version: string;
+    baked: boolean;
+    active?: boolean;
+    uri?: string;
+  };
+
+  type PackageCollection = {
+    version: string;
+    uri?: string;
+    created_at?: string;
+    created_by?: string;
+    tools?: any[];
+    [key: string]: any;
+  };
+
+  // Messages
+  const noUriSelectedMessage = "Select a URI to view stages or package collections";
 
   // Navigation state
+  let currentUri = $state("/project");
   let projectSelection = $state("select");
   let modelingSelection = $state("select");
   let applicationSelection = $state("select");
 
-  // Fonction pour construire l'URI basé sur les sélections actuelles
+  let showModelingCombobox = $state(false);
+  let showApplicationCombobox = $state(false);
+
+  // Add option state
+  let isAddingProjectOption = $state(false);
+  let isAddingModelingOption = $state(false);
+  let isAddingApplicationOption = $state(false);
+  let newOptionText = $state("");
+
+  // Content data
+  // Define Stage type
+  type Stage = {
+    name: string;
+    loaded?: boolean;
+    uri?: string;
+    from_version?: string;
+    rxt_path?: string;
+    tools?: any[];
+    active?: boolean;
+  };
+
+  let stages = $state<Stage[]>([]);
+  let activePackage = $state<string | null>(null);
+  let activeStage = $state<string | null>(null);
+  let packages = $state<Package[]>([]);
+  // Define the Tool type to accurately represent tools array elements
+  type Tool = string | { name: string; loaded?: boolean; [key: string]: any };
+  let tools = $state<Tool[]>([]);
+  let applicationDropdownOpen = $state(false);
+
+  // Other variables
+  let projectDropdownOpen = $state(false);
+  let modelingDropdownOpen = $state(false);
+  let projectOptions = $state<string[]>(["select"]);
+  let modelingOptions = $state<string[]>(["select"]);
+  let applicationOptions = $state<string[]>(["select"]);
+
+  // Build URI based on current selections
   function buildCurrentUri() {
-    if (projectSelection === "select") {
-      return "";
-    }
+    if (projectSelection === "select") return "";
 
     if (!showModelingCombobox || modelingSelection === "select") {
       return `/${projectSelection}`;
@@ -42,45 +104,11 @@
     }
   }
 
-  // Visibilité des comboboxes
-  let showModelingCombobox = $state(false);
-  let showApplicationCombobox = $state(false);
-
-  // Mode d'ajout pour chaque combobox
-  let isAddingProjectOption = $state(false);
-  let isAddingModelingOption = $state(false);
-  let isAddingApplicationOption = $state(false);
-  let newOptionText = $state("");
-
-  // Options disponibles pour chaque combobox
-  let projectOptions = $state([]);
-  let modelingOptions = $state([]);
-  let applicationOptions = $state([]);
-
-  // État d'ouverture pour chaque combobox
-  let projectDropdownOpen = $state(false);
-  let modelingDropdownOpen = $state(false);
-  let applicationDropdownOpen = $state(false);
-
-  // Fonctions pour gérer les combobox
+  // Dropdown management
   function toggleDropdown(dropdownName: string) {
-    switch(dropdownName) {
-      case 'project':
-        projectDropdownOpen = !projectDropdownOpen;
-        modelingDropdownOpen = false;
-        applicationDropdownOpen = false;
-        break;
-      case 'modeling':
-        modelingDropdownOpen = !modelingDropdownOpen;
-        projectDropdownOpen = false;
-        applicationDropdownOpen = false;
-        break;
-      case 'application':
-        applicationDropdownOpen = !applicationDropdownOpen;
-        projectDropdownOpen = false;
-        modelingDropdownOpen = false;
-        break;
-    }
+    projectDropdownOpen = dropdownName === 'project' ? !projectDropdownOpen : false;
+    modelingDropdownOpen = dropdownName === 'modeling' ? !modelingDropdownOpen : false;
+    applicationDropdownOpen = dropdownName === 'application' ? !applicationDropdownOpen : false;
   }
 
   function selectOption(dropdownName: string, option: string) {
@@ -88,16 +116,14 @@
       case 'project':
         projectSelection = option;
         projectDropdownOpen = false;
-        // Reset the child selections when changing projects
         modelingSelection = "select";
         applicationSelection = "select";
         showModelingCombobox = true;
-        showApplicationCombobox = false; // Masquer la combobox d'application lorsqu'on change de projet
+        showApplicationCombobox = false;
         break;
       case 'modeling':
         modelingSelection = option;
         modelingDropdownOpen = false;
-        // Reset the application selection when changing modeling type
         applicationSelection = "select";
         showApplicationCombobox = true;
         break;
@@ -108,13 +134,10 @@
     }
     addLog(`Selected ${dropdownName}: ${option}`);
 
-    // Fetch package collections whenever the navigation path changes
     fetchPackageCollectionsByUri();
-    // Also fetch stages for the current URI
     fetchStagesByUri();
   }
 
-  // Fonction pour ajouter une nouvelle option
   function addNewOption(dropdownType: string) {
     if (!newOptionText.trim()) {
       addLog("Option name cannot be empty", "warning");
@@ -160,20 +183,17 @@
     fetchPackageCollectionsByUri();
   }
 
-  // Fonctions pour démarrer l'ajout d'une nouvelle option
   function startAddingOption(dropdownType: string) {
     newOptionText = "";
     isAddingProjectOption = dropdownType === 'project';
     isAddingModelingOption = dropdownType === 'modeling';
     isAddingApplicationOption = dropdownType === 'application';
 
-    // Fermer les dropdowns
     projectDropdownOpen = false;
     modelingDropdownOpen = false;
     applicationDropdownOpen = false;
   }
 
-  // Fonction pour annuler l'ajout
   function cancelAddingOption() {
     isAddingProjectOption = false;
     isAddingModelingOption = false;
@@ -181,89 +201,52 @@
     newOptionText = "";
   }
 
-  // Data for stages and packages
-  let stages = $state([]);
-
-  // Track active package collection and active stage
-  let activePackage = $state(null);
-  let activeStage = $state(null);
-  let packages = $state([]);
-
-  let tools = $state([]);
-
-  // Toggle dark mode
+  // UI Actions
   function toggleDarkMode() {
     theme = theme === "Light" ? "Dark" : "Light";
   }
 
-  // Handle selecting a package collection
-  async function handlePackageClick(item) {
+  async function handlePackageClick(item: { version: string }) {
     try {
-      // Deselect any active stage when a package is selected
       activeStage = null;
-
-      // Update active status for all packages
       packages = packages.map(pkg => ({
         ...pkg,
         active: pkg.version === item.version
       }));
-
-      // Update active status for all stages (none should be active)
       stages = stages.map(stage => ({
         ...stage,
         active: false
       }));
-
-      // Set the active package
       activePackage = item.version;
-
-      // Log the selection
       addLog(`Selected package collection: ${item.version}`, "info");
-
-      // Fetch tools for this package collection
       await fetchToolsForPackage(item.version);
     } catch (error) {
       addLog(`Error selecting package: ${error}`, "error");
     }
   }
 
-  // Handle selecting a stage
-  async function handleStageClick(item) {
+  async function handleStageClick(item: Stage) {
     try {
-      // Deselect any active package when a stage is selected
       activePackage = null;
-
-      // Update active status for all stages
       stages = stages.map(stage => ({
         ...stage,
         active: stage.name === item.name
       }));
-
-      // Update active status for all packages (none should be active)
       packages = packages.map(pkg => ({
         ...pkg,
         active: false
       }));
-
-      // Set the active stage
       activeStage = item.name;
-
-      // Log the selection
       addLog(`Selected stage: ${item.name}`, "info");
-
-      // Fetch tools for this stage
       await fetchToolsForStage(item);
     } catch (error) {
       addLog(`Error selecting stage: ${error}`, "error");
     }
   }
 
-  // Function to fetch tools for a specific package
-  async function fetchToolsForPackage(packageVersion) {
+  async function fetchToolsForPackage(packageVersion: string) {
     try {
       addLog(`Fetching tools for package collection: ${packageVersion}`, "info");
-
-      // Rechercher le package collection dans la liste selon la version
       const selectedPackage = packageCollections.find(pkg => pkg.version === packageVersion);
 
       if (!selectedPackage) {
@@ -271,52 +254,39 @@
         return;
       }
 
-      // Vérifier si le package a des outils définis
       if (selectedPackage.tools && Array.isArray(selectedPackage.tools) && selectedPackage.tools.length > 0) {
-        // Extraire uniquement les noms des outils
         tools = selectedPackage.tools.map(tool => tool.name || tool);
-
         addLog(`Found ${tools.length} tools in package ${packageVersion}`, "success");
       } else {
-        // Si aucun outil n'est défini dans le package, nous affichons un message spécial
         tools = ["No tools for the selection"];
-        addLog(`Aucun outil trouvé dans le package ${packageVersion}`, "warning");
+        addLog(`No tools found in package ${packageVersion}`, "warning");
       }
     } catch (error) {
       addLog(`Error fetching tools: ${error}`, "error");
-      tools = ["No tools for the selection"]; // Afficher le message d'erreur dans la liste d'outils
+      tools = ["No tools for the selection"];
     }
   }
 
-  // Function to fetch tools for a specific stage
-  async function fetchToolsForStage(stage) {
+  async function fetchToolsForStage(stage: Stage) {
     try {
       addLog(`Fetching tools for stage: ${stage.name}`, "info");
-
-      // Vérifier si le stage a des outils définis
       if (stage.tools && Array.isArray(stage.tools) && stage.tools.length > 0) {
-        // Extraire uniquement les noms des outils
         tools = stage.tools.map(tool => tool.name || tool);
-
         addLog(`Found ${tools.length} tools in stage ${stage.name}`, "success");
       } else {
-        // Si aucun outil n'est défini dans le stage, nous affichons un message spécial
         tools = ["No tools for the selection"];
-        addLog(`Aucun outil trouvé dans le stage ${stage.name}`, "warning");
+        addLog(`No tools found in stage ${stage.name}`, "warning");
       }
     } catch (error) {
       addLog(`Error fetching tools for stage: ${error}`, "error");
-      tools = ["No tools for the selection"]; // Afficher le message d'erreur dans la liste d'outils
+      tools = ["No tools for the selection"];
     }
   }
 
-  // Functions to handle button clicks
+  // Button actions
   async function loadStage(stageName: string) {
     try {
-      // This would call a Tauri command to load the stage
-      // await invoke("load_stage", { name: stageName });
       addLog(`Loading stage: ${stageName}`);
-      // Find and update the loaded stage
       stages = stages.map(stage =>
         stage.name === stageName
           ? { ...stage, loaded: true }
@@ -329,22 +299,44 @@
 
   async function revertStage(stageName: string) {
     try {
-      // This would call a Tauri command to revert the stage
-      // await invoke("revert_stage", { name: stageName });
-      addLog(`Reverting stage: ${stageName}`);
+      const stageToRevert = stages.find(stage => stage.name === stageName);
+      if (stageToRevert) {
+        currentStageName = stageName;
+        currentStageUri = stageToRevert.uri || "";
+        revertModalOpen = true;
+        addLog(`Opening revert dialog for stage: ${stageName}`);
+      } else {
+        addLog(`Stage ${stageName} not found for reverting`, "error");
+      }
     } catch (error) {
-      addLog(`Error reverting stage: ${error}`, "error");
+      addLog(`Error opening revert modal: ${error}`, "error");
+    }
+  }
+
+  function closeRevertModal() {
+    revertModalOpen = false;
+    currentStageName = "";
+    currentStageUri = "";
+    addLog("Cancelled revert operation");
+  }
+
+  async function handleRevertComplete(event: CustomEvent) {
+    const { success, stageName } = event.detail;
+
+    if (success) {
+      addLog(`Successfully reverted stage: ${stageName}`, "success");
+      // Refresh stages to show the newly active stage
+      await fetchStagesByUri();
+    } else {
+      addLog(`Failed to revert stage: ${event.detail.error}`, "error");
     }
   }
 
   async function bakePackage(packageName: string) {
     try {
-      // This would call a Tauri command to bake the package
-      // await invoke("bake_package", { name: packageName });
       addLog(`Baking package: ${packageName}`);
-      // Update the package state
       packages = packages.map(pkg =>
-        pkg.name === packageName
+        pkg.version === packageName
           ? { ...pkg, baked: true }
           : pkg
       );
@@ -355,11 +347,8 @@
 
   async function createFromPackage(packageVersion: string) {
     try {
-      // Find the package collection to create from our list
       const packageToCreateFrom = packageCollections.find(pkg => pkg.version === packageVersion);
-
       if (packageToCreateFrom) {
-        // Set current package data and open modal in edit mode
         currentPackageData = packageToCreateFrom;
         isEditingPackage = true;
         packageModalOpen = true;
@@ -374,15 +363,14 @@
 
   async function loadTool(toolName: string) {
     try {
-      // This would call a Tauri command to load the tool
-      // await invoke("load_tool", { name: toolName });
       addLog(`Loading tool: ${toolName}`);
-      // Find and update the loaded tool
-      tools = tools.map(tool =>
-        tool.name === toolName
-          ? { ...tool, loaded: true }
-          : { ...tool, loaded: false }
-      );
+      tools = tools.map(tool => {
+        // Handle both string tools and object tools
+        const name = typeof tool === 'string' ? tool : tool.name;
+        return name === toolName
+          ? typeof tool === 'string' ? { name: tool, loaded: true } : { ...tool, loaded: true }
+          : typeof tool === 'string' ? tool : { ...tool, loaded: false };
+      });
     } catch (error) {
       addLog(`Error loading tool: ${error}`, "error");
     }
@@ -395,28 +383,22 @@
     logs = [...logs, { message, type, icon }];
   }
 
-  // Open package creation modal
   function createNewPackage() {
     packageModalOpen = true;
     addLog("Opening package collection creation form...");
   }
 
-  // Handle package collection submission
   async function handlePackageSubmit(event: CustomEvent) {
     try {
       const formData = event.detail;
-
-      // Utiliser la fonction buildCurrentUri pour créer l'URI
       const uri = buildCurrentUri();
 
       if (!uri) {
-        addLog("Impossible de créer un package: veuillez sélectionner au moins un projet", "error");
+        addLog("Cannot create a package: please select at least one project", "error");
         packageModalOpen = false;
         return;
       }
 
-      // Create a new package collection regardless of whether we're editing or creating
-      // Even when using "Create From", we always create a new collection
       const newPackage = {
         ...formData,
         created_at: new Date().toISOString(),
@@ -424,60 +406,50 @@
         uri: uri
       };
 
-      // Call Tauri command to store in MongoDB
       await invoke("save_package_collection", { packageData: newPackage });
-
-      // Add to UI list (temporary until we implement loading from MongoDB)
       packages = [...packages, { version: formData.version, baked: false }];
 
-      // Log success
       const actionType = isEditingPackage ? "Created new package collection from existing" : "Created new package collection";
       addLog(`${actionType} with version: ${formData.version} by ${currentUsername}`, "success");
 
-      // Reset form state and close modal
       isEditingPackage = false;
       currentPackageData = null;
       packageModalOpen = false;
 
-      // Refresh the package collections to show the updated data
       fetchPackageCollectionsByUri();
     } catch (error) {
       addLog(`Error saving package collection: ${error}`, "error");
     }
   }
 
-  // Close package modal
   function closePackageModal() {
     packageModalOpen = false;
-    isEditingPackage = false; // Reset editing mode
-    currentPackageData = null; // Clear current package data
+    isEditingPackage = false;
+    currentPackageData = null;
     addLog("Cancelled package collection creation/edit");
   }
 
-  // Function to reset URI path to default values
   function resetToHome() {
     projectSelection = "select";
     modelingSelection = "select";
     applicationSelection = "select";
-    // Réinitialiser la visibilité des comboboxes
     showModelingCombobox = false;
     showApplicationCombobox = false;
     addLog("Reset URI path to home", "info");
     currentUri = buildCurrentUri();
   }
 
-  // Function to refresh package collections
   function refreshPackages() {
     addLog("Refreshing package collections and stages...", "info");
     fetchPackageCollectionsByUri();
-    fetchStagesByUri(); // Also fetch stages when refreshing
+    fetchStagesByUri();
   }
 
-  // Fetch current username on component initialization
+  // Data fetching functions
   async function fetchCurrentUsername() {
     try {
       const username = await invoke("get_current_username");
-      currentUsername = username;
+      currentUsername = username as string;
       addLog(`Session user identified: ${username}`, "info");
     } catch (error) {
       addLog(`Failed to get current username: ${error}`, "warning");
@@ -485,14 +457,11 @@
     }
   }
 
-  // Function to fetch package collections by URI
   async function fetchPackageCollectionsByUri() {
     try {
-      // Utiliser la fonction buildCurrentUri pour construire l'URI actuel
       currentUri = buildCurrentUri();
 
       if (!currentUri) {
-        // Aucun projet sélectionné, URI vide
         addLog(noUriSelectedMessage, "warning");
         packageCollections = [];
         packages = [];
@@ -501,22 +470,23 @@
       }
 
       addLog(`Fetching package collections for URI: ${currentUri}`, "info");
-
-      const result = await invoke("get_package_collections_by_uri", { uri: currentUri });
+      const result = await invoke("get_package_collections_by_uri", { uri: currentUri }) as {
+        success: boolean;
+        collections?: PackageCollection[];
+        message?: string;
+      };
 
       if (result.success) {
         if (result.collections) {
           packageCollections = result.collections;
-          // Update the packages list to display in the UI - using version instead of name
           packages = packageCollections.map(collection => ({
-            version: collection.version, // Utiliser version au lieu de name
-            baked: false, // We can enhance this in the future to store bake status
-            uri: collection.uri // Ajouter l'URI pour pouvoir l'utiliser lors du Bake
+            version: collection.version,
+            baked: false,
+            uri: collection.uri
           }));
           packageCollectionMessage = "";
           addLog(`Found ${packageCollections.length} package collections for ${currentUri}`, "success");
         } else {
-          // No collections found, display message
           packageCollections = [];
           packages = [];
           packageCollectionMessage = result.message || `no collection found in ${currentUri}`;
@@ -532,48 +502,30 @@
     }
   }
 
-  // Function to fetch all available URIs from MongoDB and populate dropdown options
   async function fetchAllUrisAndUpdateOptions() {
     try {
       addLog("Fetching all available URIs from MongoDB...");
-
-      // Call Rust function to get all package collections
-      const result = await invoke("get_all_package_collections");
+      const result = await invoke("get_all_package_collections") as {
+        success: boolean;
+        collections?: PackageCollection[];
+        message?: string;
+      };
 
       if (result.success && result.collections) {
-        // Store all URIs for future use
         allUris = result.collections.map(collection => collection.uri || "");
 
-        // Create sets to track unique values
-        const projectSet = new Set();
-        const modelingSet = new Set();
-        const appSet = new Set();
+        const projectSet = new Set(["select"]);
+        const modelingSet = new Set(["select"]);
+        const appSet = new Set(["select"]);
 
-        // Add "select" option as default
-        projectSet.add("select");
-        modelingSet.add("select");
-        appSet.add("select");
-
-        // Process each URI to extract components
         allUris.forEach(uri => {
           if (!uri) return;
-
           const parts = uri.split('/').filter(part => part);
-
-          if (parts.length >= 1) {
-            projectSet.add(parts[0]);
-          }
-
-          if (parts.length >= 2) {
-            modelingSet.add(parts[1]);
-          }
-
-          if (parts.length >= 3) {
-            appSet.add(parts[2]);
-          }
+          if (parts.length >= 1) projectSet.add(parts[0]);
+          if (parts.length >= 2) modelingSet.add(parts[1]);
+          if (parts.length >= 3) appSet.add(parts[2]);
         });
 
-        // Replace static options with dynamically generated ones from MongoDB
         projectOptions = Array.from(projectSet);
         modelingOptions = Array.from(modelingSet);
         applicationOptions = Array.from(appSet);
@@ -587,42 +539,36 @@
     }
   }
 
-  // Function to fetch stages by URI
-  async function fetchStagesByUri() {
+  async function fetchStagesByUri(showActiveOnly = true) {
     try {
-      // Utiliser la fonction buildCurrentUri pour construire l'URI actuel
       currentUri = buildCurrentUri();
 
       if (!currentUri) {
-        // Aucun projet sélectionné, URI vide
         addLog(noUriSelectedMessage, "warning");
         stages = [];
         stageMessage = noUriSelectedMessage;
         return;
       }
 
-      addLog(`Fetching stages for URI: ${currentUri}`, "info");
-
-      // Use the SectionPanel component's fetchStagesByUri function
-      const stagesData = await invoke("get_stages_by_uri", { uri: currentUri });
+      addLog(`Fetching stages for URI: ${currentUri}${showActiveOnly ? ' (active only)' : ''}`, "info");
+      const stagesData = await invoke("get_stages_by_uri", { uri: currentUri, activeOnly: showActiveOnly });
 
       if (Array.isArray(stagesData) && stagesData.length > 0) {
-        // Transform the data to the format expected by the UI
         stages = stagesData.map(stage => ({
           name: stage.name,
-          loaded: false, // Initialize as not loaded
+          loaded: false,
           uri: stage.uri,
           from_version: stage.from_version,
           rxt_path: stage.rxt_path,
-          tools: stage.tools
+          tools: stage.tools,
+          active: stage.active
         }));
-
-        stageMessage = ""; // Clear the message when stages are found
+        stageMessage = "";
         addLog(`Found ${stages.length} stages for ${currentUri}`, "success");
       } else {
         stages = [];
-        stageMessage = `No stages found for ${currentUri}`;
-        addLog(`No stages found for ${currentUri}`, "warning");
+        stageMessage = `No ${showActiveOnly ? 'active ' : ''}stages found for ${currentUri}`;
+        addLog(`No ${showActiveOnly ? 'active ' : ''}stages found for ${currentUri}`, "warning");
       }
     } catch (error) {
       addLog(`Error fetching stages: ${error}`, "error");
@@ -631,14 +577,11 @@
     }
   }
 
-  // Handle bake completion event
   async function handleBakeComplete(event: CustomEvent) {
     try {
       const { success, data } = event.detail;
-
       if (success) {
         addLog(`Stage "${data.name}" created successfully from package ${data.from_version}`, "success");
-        // Refresh the stages list to show the newly created stage
         await fetchStagesByUri();
       } else {
         addLog(`Failed to create stage: ${event.detail.error}`, "error");
@@ -648,22 +591,20 @@
     }
   }
 
-  // Function to refresh stages
   async function refreshStages() {
     addLog("Refreshing stages...", "info");
     await fetchStagesByUri();
   }
 
-  // Initialize app
+  // Initialize the application
   async function initApp() {
     await fetchCurrentUsername();
-    await fetchAllUrisAndUpdateOptions(); // Fetch and update dropdown options from MongoDB URIs
+    await fetchAllUrisAndUpdateOptions();
     await fetchPackageCollectionsByUri();
-    await fetchStagesByUri(); // Also fetch stages during initialization
+    await fetchStagesByUri();
     addLog("RezLauncher started");
   }
 
-  // Call the initialization function
   initApp();
 </script>
 
@@ -697,11 +638,11 @@
         <input
           type="text"
           bind:value={newOptionText}
-          placeholder="Nouveau projet..."
+            placeholder="New project..."
           onkeypress={(e) => e.key === 'Enter' && addNewOption('project')}
         />
-        <button class="add-btn" onclick={() => addNewOption('project')}>Ajouter</button>
-        <button class="cancel-btn" onclick={cancelAddingOption}>Annuler</button>
+        <button class="add-btn" onclick={() => addNewOption('project')}>Add</button>
+        <button class="cancel-btn" onclick={cancelAddingOption}>Cancel</button>
       </div>
     {:else}
       <div class="dropdown">
@@ -727,7 +668,7 @@
               onclick={() => startAddingOption('project')}
               onkeydown={(e) => e.key === 'Enter' && startAddingOption('project')}
             >
-              <span class="plus-icon">+</span> Ajouter...
+                <span class="plus-icon">+</span> Add...
             </button>
           </ul>
         {/if}
@@ -744,7 +685,7 @@
             placeholder="Nouveau type..."
             onkeypress={(e) => e.key === 'Enter' && addNewOption('modeling')}
           />
-          <button class="add-btn" onclick={() => addNewOption('modeling')}>Ajouter</button>
+            <button class="add-btn" onclick={() => addNewOption('modeling')}>Add</button>
           <button class="cancel-btn" onclick={cancelAddingOption}>Annuler</button>
         </div>
       {:else}
@@ -771,7 +712,7 @@
                 onclick={() => startAddingOption('modeling')}
                 onkeydown={(e) => e.key === 'Enter' && startAddingOption('modeling')}
               >
-                <span class="plus-icon">+</span> Ajouter...
+                <span class="plus-icon">+</span> Add...
               </button>
             </ul>
           {/if}
@@ -789,7 +730,7 @@
             placeholder="Nouvelle application..."
             onkeypress={(e) => e.key === 'Enter' && addNewOption('application')}
           />
-          <button class="add-btn" onclick={() => addNewOption('application')}>Ajouter</button>
+          <button class="add-btn" onclick={() => addNewOption('application')}>Add</button>
           <button class="cancel-btn" onclick={cancelAddingOption}>Annuler</button>
         </div>
       {:else}
@@ -816,7 +757,7 @@
                 onclick={() => startAddingOption('application')}
                 onkeydown={(e) => e.key === 'Enter' && startAddingOption('application')}
               >
-                <span class="plus-icon">+</span> Ajouter...
+                <span class="plus-icon">+</span> Add...
               </button>
             </ul>
           {/if}
@@ -898,12 +839,19 @@
     </div>
   </div>
 
-  <!-- Package creation/editing modal -->
   <PackageModal
     isOpen={packageModalOpen}
     packageData={currentPackageData}
     on:close={closePackageModal}
     on:submit={handlePackageSubmit}
+  />
+
+  <RevertModal
+    isOpen={revertModalOpen}
+    stageName={currentStageName}
+    stageUri={currentStageUri}
+    on:close={closeRevertModal}
+    on:revert-complete={handleRevertComplete}
   />
 
   <footer>
@@ -922,7 +870,6 @@
 </main>
 
 <style>
-  /* Reset and base styles */
   :root {
     --primary-color: #0099cc;
     --accent-color: #00cc99;
@@ -961,7 +908,6 @@
     background-color: var(--background-color);
   }
 
-  /* Header styles */
   header {
     display: flex;
     justify-content: space-between;
@@ -989,7 +935,6 @@
     cursor: pointer;
   }
 
-  /* Navigation/Breadcrumb styles */
   .breadcrumb {
     display: flex;
     align-items: center;
@@ -1085,11 +1030,6 @@
     background-color: rgba(0, 0, 0, 0.1);
   }
 
-  .home-button svg, .refresh-button svg {
-    width: 16px;
-    height: 16px;
-  }
-
   .add-option-form {
     display: flex;
     align-items: center;
@@ -1133,7 +1073,6 @@
     margin-right: 4px;
   }
 
-  /* Content area styles */
   .content-area {
     display: flex;
     flex: 1;
@@ -1147,55 +1086,11 @@
     border-right: 1px solid var(--border-color);
   }
 
-  /* Section styles - moved to SectionPanel.svelte */
-
-  .expand-icon {
-    margin-right: 8px;
-    cursor: pointer;
-  }
-
-  ul {
-    list-style: none;
-  }
-
-  .item-name {
-    font-size: 14px;
-  }
-
-  .action-buttons {
-    display: flex;
-    gap: 5px;
-  }
-
-  .action-button {
-    padding: 5px 12px;
-    background: var(--button-color);
-    color: var(--button-text);
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 12px;
-    transition: background-color 0.2s;
-  }
-
-  .action-button:hover {
-    filter: brightness(1.1);
-  }
-
-  .action-button.bake {
-    background-color: #00cc66;
-  }
-
-  .action-button.edit {
-    background-color: #ff9900;
-  }
-
-  /* Footer/Logs styles */
   footer {
     padding: 10px 20px;
     background: var(--footer-background);
     border-top: 1px solid var(--border-color);
-    height: 200px; /* Fixed height for the footer */
+    height: 200px;
     display: flex;
     flex-direction: column;
   }
@@ -1216,7 +1111,7 @@
     background: var(--card-background);
     border: 1px solid var(--border-color);
     border-radius: 4px;
-    height: calc(100% - 25px); /* Full height minus the heading */
+    height: calc(100% - 25px);
     overflow-y: auto;
     padding: 5px 0;
   }
@@ -1247,7 +1142,6 @@
     color: #ff3300;
   }
 
-  /* Responsive adjustments */
   @media (max-width: 768px) {
     .content-area {
       flex-direction: column;
