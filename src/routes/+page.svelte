@@ -131,6 +131,11 @@
     }
     addLog(`Selected ${dropdownName}: ${option}`);
 
+    // Reset active selections and tools BEFORE fetching new data
+    activeStage = null;
+    activePackage = null;
+    tools = []; // Clear tools
+
     fetchPackageCollectionsByUri();
     fetchStagesByUri();
   }
@@ -470,8 +475,9 @@
           packageCollections = result.collections;
           packages = packageCollections.map(collection => ({
             version: collection.version,
-            baked: false,
-            uri: collection.uri
+            baked: false, // Assuming baked is not the active state indicator
+            uri: collection.uri,
+            active: false // Ensure active is false
           }));
           packageCollectionMessage = "";
           addLog(`Found ${packageCollections.length} package collections for ${currentUri}`, "success");
@@ -484,10 +490,17 @@
       } else {
         addLog(`Error fetching package collections: ${result.message}`, "error");
         packageCollectionMessage = `Error: ${result.message}`;
+        packageCollections = []; // Clear on error
+        packages = []; // Clear on error
       }
+      // Reset activePackage state variable
+      activePackage = null;
     } catch (error) {
       addLog(`Error fetching package collections: ${error}`, "error");
       packageCollectionMessage = `Error: ${error}`;
+      packageCollections = []; // Clear on error
+      packages = []; // Clear on error
+      activePackage = null; // Reset on error too
     }
   }
 
@@ -543,7 +556,7 @@
           from_version: stage.from_version,
           rxt_path: stage.rxt_path,
           tools: stage.tools,
-          active: stage.active
+          active: false // Ensure active is false
         }));
         stageMessage = "";
         addLog(`Found ${stages.length} stages for ${currentUri}`, "success");
@@ -552,10 +565,13 @@
         stageMessage = `No ${showActiveOnly ? 'active ' : ''}stages found for ${currentUri}`;
         addLog(`No ${showActiveOnly ? 'active ' : ''}stages found for ${currentUri}`, "warning");
       }
+      // Reset activeStage state variable
+      activeStage = null;
     } catch (error) {
       addLog(`Error fetching stages: ${error}`, "error");
       stages = [];
       stageMessage = `Error: ${error}`;
+      activeStage = null; // Reset on error too
     }
   }
 
