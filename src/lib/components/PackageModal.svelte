@@ -15,7 +15,7 @@
     herit: '',
     tools: [] as string[]
   };
-  
+
   // Current input values for tags
   let currentPackageInput = '';
   let currentToolInput = '';
@@ -59,40 +59,40 @@
   }
 
   // Add new package tag
-  function addPackage(e?: KeyboardEvent) {
-    if (e && e.key !== 'Enter' && e.key !== ',') {
+  function addPackage(e?: KeyboardEvent | FocusEvent) {
+    if (e && 'key' in e && e.key !== 'Enter' && e.key !== ',') {
       return;
     }
-    
-    if (e) e.preventDefault();
-    
+
+    if (e && 'preventDefault' in e) e.preventDefault();
+
     const value = currentPackageInput.trim();
     if (value && !formData.packages.includes(value)) {
       formData.packages = [...formData.packages, value];
       currentPackageInput = '';
     }
   }
-  
+
   // Add new tool tag
-  function addTool(e?: KeyboardEvent) {
-    if (e && e.key !== 'Enter' && e.key !== ',') {
+  function addTool(e?: KeyboardEvent | FocusEvent) {
+    if (e && 'key' in e && e.key !== 'Enter' && e.key !== ',') {
       return;
     }
-    
-    if (e) e.preventDefault();
-    
+
+    if (e && 'preventDefault' in e) e.preventDefault();
+
     const value = currentToolInput.trim();
     if (value && !formData.tools.includes(value)) {
       formData.tools = [...formData.tools, value];
       currentToolInput = '';
     }
   }
-  
+
   // Remove a package tag
   function removePackage(index: number) {
     formData.packages = formData.packages.filter((_, i) => i !== index);
   }
-  
+
   // Remove a tool tag
   function removeTool(index: number) {
     formData.tools = formData.tools.filter((_, i) => i !== index);
@@ -112,7 +112,7 @@
     if (currentPackageInput.trim()) {
       addPackage();
     }
-    
+
     if (currentToolInput.trim()) {
       addTool();
     }
@@ -295,7 +295,7 @@
     color: #666;
     font-size: 12px;
   }
-  
+
   /* Tag input styling */
   .tag-input-container {
     border: 1px solid #ddd;
@@ -303,21 +303,21 @@
     padding: 5px;
     background-color: white;
   }
-  
+
   .tag-input-container input {
     border: none;
     padding: 5px;
     width: 100%;
     outline: none;
   }
-  
+
   .tags-container {
     display: flex;
     flex-wrap: wrap;
     gap: 5px;
     margin-bottom: 5px;
   }
-  
+
   .tag {
     background-color: #0099cc;
     color: white;
@@ -328,7 +328,7 @@
     align-items: center;
     gap: 5px;
   }
-  
+
   .tag-remove {
     background: none;
     border: none;
@@ -395,7 +395,7 @@
     border-color: #4a4a4a;
     color: #f6f6f6;
   }
-  
+
   :global(.theme-dark) .tag-input-container {
     background-color: #2f2f2f;
     border-color: #4a4a4a;
@@ -406,7 +406,7 @@
     border-color: #555;
     color: #eee;
   }
-  
+
   :global(.theme-dark) .tag {
     background-color: #007799;
   }
