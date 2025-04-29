@@ -1,13 +1,15 @@
-name: 'Build Tauri App'
+name: Build Tauri App
 
 on:
+  workflow_run:
+    workflows: ["Test"]
+    types:
+      - completed
+    branches:
+      - main
   push:
-    branches: [ 'main' ]
     tags:
       - 'v*'
-  pull_request:
-    branches: [ 'main' ]
-  workflow_dispatch:
 
 permissions:
   contents: write
@@ -38,7 +40,7 @@ jobs:
         with:
           workspaces: './src-tauri -> target'
 
-      - name: Install dependencies (Ubuntu only)
+      - name: Install dependencies
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
