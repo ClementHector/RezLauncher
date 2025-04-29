@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use mongodb::{Client, options::ClientOptions, Collection, Database};
-use mongodb::bson::{doc, oid::ObjectId};
+use mongodb::bson::{doc, oid::ObjectId, Bson};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use chrono::Utc;
 use std::sync::Mutex;
@@ -388,6 +388,45 @@ fn get_current_username() -> Result<String, String> {
         .map_err(|e| format!("Failed to get username: {}", e))
 }
 
+#[tauri::command]
+async fn get_all_stage_names(
+    mongo_state: State<'_, MongoConnection>,
+    log_state: State<'_, LogState>,
+) -> Result<Vec<String>, String> {
+    let db = get_db(&mongo_state, &log_state).await?;
+    fetch_all_stage_names_logic(&db, &log_state).await
+}
+
+async fn fetch_all_stage_names_logic(
+    db: &Database,
+    log_state: &LogState,
+) -> Result<Vec<String>, String> {
+    let collection = db.collection::<Stage>("stages");
+
+    log_message(log_state, "Fetching all unique stage names".to_string());
+
+    match collection.distinct("name", None, None).await {
+        Ok(names_bson) => {
+            let names: Vec<String> = names_bson.into_iter()
+                .filter_map(|bson| match bson {
+                    Bson::String(s) => Some(s),
+                    _ => {
+                        log_message(log_state, format!("Non-string value found in distinct stage names: {:?}", bson));
+                        None
+                    }
+                })
+                .collect();
+            log_message(log_state, format!("Retrieved {} unique stage names", names.len()));
+            Ok(names)
+        }
+        Err(e) => {
+            let error_msg = format!("Error fetching distinct stage names: {}", e);
+            log_message(log_state, error_msg.clone());
+            Err(error_msg)
+        }
+    }
+}
+
 // Utility functions
 fn log_message(log_state: &LogState, message: String) {
     let mut log_file = match log_state.0.lock() {
@@ -455,6 +494,7 @@ fn main() {
             get_stages_by_uri,
             revert_stage,
             get_stage_history,
+            get_all_stage_names
         ])
         .setup(|app| {
             let app_handle = app.handle();
@@ -578,6 +618,7 @@ mod tests {
     use std::fs;
     use std::io::Read;
     use std::path::PathBuf;
+    use std::collections::HashSet;
 
     const TEST_MONGO_URI: &str = "mongodb://localhost:27017";
     const TEST_DB_NAME: &str = "rez_launcher_test_db";
@@ -643,6 +684,21 @@ mod tests {
             created_at: Utc::now().to_rfc3339(),
             created_by: "test_user".to_string(),
             uri: uri.to_string(),
+        }
+    }
+
+    // Helper to create a dummy Stage
+    fn create_dummy_stage(name: &str, uri: &str, version: &str, active: bool) -> Stage {
+        Stage {
+            id: None,
+            name: name.to_string(),
+            uri: uri.to_string(),
+            from_version: version.to_string(),
+            rxt_path: format!("/path/to/{}.rxt", name),
+            tools: vec!["toolC".to_string(), "toolD".to_string()],
+            created_at: Utc::now().to_rfc3339(),
+            created_by: "test_user".to_string(),
+            active: active,
         }
     }
 
@@ -791,5 +847,47 @@ mod tests {
 
         // Clean up the log file
         let _ = fs::remove_file(&log_path);
+    }
+
+    #[tokio::test]
+    async fn test_get_all_stage_names_found() {
+        let (_client, db, log_state, _log_path, _collection_name) = setup_test_db().await.expect("Test DB setup failed");
+        let stage_collection = db.collection::<Stage>("stages");
+
+        stage_collection.drop(None).await.ok();
+
+        let stage1 = create_dummy_stage("StageA", "uri/1", "v1", true);
+        let stage2 = create_dummy_stage("StageB", "uri/1", "v1", true);
+        let stage3 = create_dummy_stage("StageA", "uri/2", "v2", false);
+        let stage4 = create_dummy_stage("StageC", "uri/3", "v1", true);
+
+        stage_collection.insert_many(vec![stage1, stage2, stage3, stage4], None).await.unwrap();
+
+        let result = fetch_all_stage_names_logic(&db, &log_state).await;
+
+        assert!(result.is_ok(), "fetch_all_stage_names_logic failed: {:?}", result.err());
+        let names = result.unwrap();
+
+        let expected_names: HashSet<String> = ["StageA", "StageB", "StageC"].iter().map(|s| s.to_string()).collect();
+        let actual_names: HashSet<String> = names.into_iter().collect();
+
+        assert_eq!(actual_names.len(), 3, "Incorrect number of unique names returned");
+        assert_eq!(actual_names, expected_names, "Returned names do not match expected unique names");
+
+        stage_collection.drop(None).await.ok();
+    }
+
+     #[tokio::test]
+    async fn test_get_all_stage_names_empty_db() {
+        let (_client, db, log_state, _log_path, _collection_name) = setup_test_db().await.expect("Test DB setup failed");
+        let stage_collection = db.collection::<Stage>("stages");
+
+        stage_collection.drop(None).await.ok();
+
+        let result = fetch_all_stage_names_logic(&db, &log_state).await;
+
+        assert!(result.is_ok(), "fetch_all_stage_names_logic failed: {:?}", result.err());
+        let names = result.unwrap();
+        assert!(names.is_empty(), "Expected empty vector for empty database, got: {:?}", names);
     }
 }
