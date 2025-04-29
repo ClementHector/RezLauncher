@@ -45,11 +45,8 @@
     [key: string]: any;
   };
 
-  // Messages
-  const noUriSelectedMessage = "Select a URI to view stages or package collections";
-
   // Navigation state
-  let currentUri = $state("/project");
+  let currentUri = $state("");
   let projectSelection = $state("select");
   let modelingSelection = $state("select");
   let applicationSelection = $state("select");
@@ -461,14 +458,6 @@
     try {
       currentUri = buildCurrentUri();
 
-      if (!currentUri) {
-        addLog(noUriSelectedMessage, "warning");
-        packageCollections = [];
-        packages = [];
-        packageCollectionMessage = noUriSelectedMessage;
-        return;
-      }
-
       addLog(`Fetching package collections for URI: ${currentUri}`, "info");
       const result = await invoke("get_package_collections_by_uri", { uri: currentUri }) as {
         success: boolean;
@@ -542,13 +531,6 @@
   async function fetchStagesByUri(showActiveOnly = true) {
     try {
       currentUri = buildCurrentUri();
-
-      if (!currentUri) {
-        addLog(noUriSelectedMessage, "warning");
-        stages = [];
-        stageMessage = noUriSelectedMessage;
-        return;
-      }
 
       addLog(`Fetching stages for URI: ${currentUri}${showActiveOnly ? ' (active only)' : ''}`, "info");
       const stagesData = await invoke("get_stages_by_uri", { uri: currentUri, activeOnly: showActiveOnly });

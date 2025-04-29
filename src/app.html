@@ -4,7 +4,27 @@
     <meta charset="utf-8" />
     <link rel="icon" href="%sveltekit.assets%/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Tauri + SvelteKit + Typescript App</title>
+    <meta name="description" content="RezLauncher - Launcher for your projects Rez" />
+    <title>RezLauncher</title>
+    <style>
+      html, body {
+        overflow-x: hidden;
+        margin: 0;
+        padding: 0;
+      }
+      body::after {
+        content: '';
+        position: fixed;
+        top: 0;
+        right: 0;
+        width: 0;
+        height: 100vh;
+        background: transparent;
+        z-index: 9999;
+        box-shadow: none;
+        border: none;
+      }
+    </style>
     %sveltekit.head%
   </head>
   <body data-sveltekit-preload-data="hover">
