@@ -93,6 +93,24 @@ The MongoDB connection is configured in `src-tauri/src/main.rs`. By default, it 
 - MongoDB URI: `mongodb://localhost:27017`
 - Database name: `rez_launcher`
 
+## Backend Testing (Rust)
+
+Unit tests for the Rust backend (Tauri core process) are located within the `src-tauri/src/main.rs` file, inside the `#[cfg(test)] mod tests` module.
+
+To run the tests:
+
+1.  **Ensure a MongoDB instance is running locally** on the default port (27017). The tests require a running MongoDB server to connect to the test database.
+2.  Navigate to the `src-tauri` directory in your terminal:
+    ```bash
+    cd src-tauri
+    ```
+3.  Run the tests using Cargo:
+    ```bash
+    cargo test
+    ```
+
+The tests will connect to MongoDB, create a temporary test database (`rez_launcher_test_db`), run the test cases, and then drop the test database.
+
 ## License
 
 <!-- TODO -->

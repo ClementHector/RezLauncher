@@ -1,0 +1,48 @@
+name: Test
+
+on:
+    push:
+    pull_request:
+
+permissions:
+    contents: write
+    packages: read
+    issues: read
+    pull-requests: read
+
+jobs:
+    test-rust:
+      name: Test rust code
+      strategy:
+        fail-fast: false
+        matrix:
+          platform: [macos-latest, ubuntu-22.04, windows-latest]
+
+      runs-on: ${{ matrix.platform }}
+
+      steps:
+        - name: Checkout repository
+          uses: actions/checkout@v4
+          with:
+            fetch-depth: 0
+
+        - name: Install Rust
+          uses: dtolnay/rust-toolchain@stable
+
+        - name: Rust cache
+          uses: swatinem/rust-cache@v2
+          with:
+            workspaces: './src-tauri -> target'
+
+        - name: Install dependencies (Ubuntu only)
+          if: matrix.platform == 'ubuntu-22.04'
+          run: |
+            sudo apt-get update
+            sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libappindicator3-dev librsvg2-dev patchelf
+
+        - name: Run Rust tests
+          run: cargo test
+          working-directory: ./src-tauri
+
+    # test-java:
+    #     name: Test javascript code
