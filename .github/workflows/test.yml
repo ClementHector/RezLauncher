@@ -11,8 +11,8 @@ permissions:
     pull-requests: read
 
 jobs:
-    test:
-      name: Test
+    test-rust:
+      name: Test rust code
       strategy:
         fail-fast: false
         matrix:
@@ -43,3 +43,6 @@ jobs:
         - name: Run Rust tests
           run: cargo test
           working-directory: ./src-tauri
+
+    # test-java:
+    #     name: Test javascript code
