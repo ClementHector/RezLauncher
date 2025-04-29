@@ -174,15 +174,6 @@
                   {#if showActions}
                     <div class="action-buttons">
                       <button
-                        class="action-button edit"
-                        on:click={(e) => {
-                          e.stopPropagation();
-                          onEdit(item.version || item.name);
-                        }}
-                      >
-                        Create From
-                      </button>
-                      <button
                         class="action-button bake"
                         on:click={(e) => {
                           e.stopPropagation();
@@ -190,6 +181,15 @@
                         }}
                       >
                         Bake
+                      </button>
+                      <button
+                        class="action-button edit"
+                        on:click={(e) => {
+                          e.stopPropagation();
+                          onEdit(item.version || item.name);
+                        }}
+                      >
+                        Create From
                       </button>
                       <button
                         class="action-button"
@@ -366,7 +366,7 @@
   }
 
   .action-button.bake {
-    background-color: #00cc66;
+    background-color: #4CAF50;
   }
 
   .action-button.edit {
