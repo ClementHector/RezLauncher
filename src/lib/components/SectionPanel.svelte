@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
   import BakeModal from './BakeModal.svelte';
+  import PushToModal from './PushToModal.svelte';
   import { invoke } from '@tauri-apps/api/tauri';
 
   const dispatch = createEventDispatcher();
@@ -28,7 +29,9 @@
   // State
   let expanded = true;
   let showBakeModal = false;
+  let showPushToModal = false;
   let selectedItem: any = null;
+  let stageToPush: any = null;
   let packageTools: string[] = [];
 
   // Determine if action buttons should be shown
@@ -69,6 +72,21 @@
     selectedItem = null;
   }
 
+  function openPushToModal(item: any) {
+    stageToPush = item;
+    showPushToModal = true;
+  }
+
+  function closePushToModal() {
+    showPushToModal = false;
+    stageToPush = null;
+  }
+
+  function handlePushComplete(event: CustomEvent) {
+    console.log(`Push to ${event.detail.targetStageName} complete.`);
+    handleRefreshStages();
+  }
+
   async function handleBakeSubmit(event: CustomEvent) {
     try {
       const bakeData = event.detail;
@@ -76,9 +94,9 @@
       dispatch('bake-complete', { success: true, data: bakeData });
     } catch (error: unknown) {
       console.error('Error saving stage:', error);
-      dispatch('bake-complete', { 
-        success: false, 
-        error: error instanceof Error ? error.message : String(error) 
+      dispatch('bake-complete', {
+        success: false,
+        error: error instanceof Error ? error.message : String(error)
       });
     }
   }
@@ -156,15 +174,6 @@
                   {#if showActions}
                     <div class="action-buttons">
                       <button
-                        class="action-button edit"
-                        on:click={(e) => {
-                          e.stopPropagation();
-                          onEdit(item.version || item.name);
-                        }}
-                      >
-                        Create From
-                      </button>
-                      <button
                         class="action-button bake"
                         on:click={(e) => {
                           e.stopPropagation();
@@ -172,6 +181,15 @@
                         }}
                       >
                         Bake
+                      </button>
+                      <button
+                        class="action-button edit"
+                        on:click={(e) => {
+                          e.stopPropagation();
+                          onEdit(item.version || item.name);
+                        }}
+                      >
+                        Create From
                       </button>
                       <button
                         class="action-button"
@@ -190,6 +208,16 @@
                   <span class="item-name">{item.name}</span>
                   <div class="action-buttons">
                     {#if onRevert && showActions}
+                      <button
+                        class="action-button push"
+                        on:click={(e) => {
+                          e.stopPropagation();
+                          openPushToModal(item);
+                        }}
+                        title="Push this stage's configuration to another stage name"
+                      >
+                        Push To
+                      </button>
                       <button
                         class="action-button revert"
                         on:click={(e) => {
@@ -229,6 +257,13 @@
     packageTools={packageTools}
     on:close={closeBakeModal}
     on:submit={handleBakeSubmit}
+  />
+
+  <PushToModal
+    isOpen={showPushToModal}
+    stageData={stageToPush}
+    on:close={closePushToModal}
+    on:push-complete={handlePushComplete}
   />
 </div>
 
@@ -331,15 +366,19 @@
   }
 
   .action-button.bake {
-    background-color: #00cc66;
+    background-color: #4CAF50;
   }
 
   .action-button.edit {
     background-color: #ff9900;
   }
 
+  .action-button.push {
+    background-color: #4CAF50;
+  }
+
   .action-button.revert {
-    background-color: #ff3333;
+    background-color: #ff9800;
   }
 
   .empty-message {
