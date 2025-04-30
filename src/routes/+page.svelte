@@ -183,6 +183,7 @@
 
     newOptionText = "";
     fetchPackageCollectionsByUri();
+    fetchStagesByUri();
   }
 
   function startAddingOption(dropdownType: string) {
