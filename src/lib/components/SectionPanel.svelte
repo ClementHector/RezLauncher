@@ -12,7 +12,7 @@
   export let expandable: boolean = true;
   export let showCreateNew: boolean = false;
   export let hasBakeEdit: boolean = false;
-  export let mode: string = "Default";
+  export let mode: string = "Launcher";
   export let isTools: boolean = false;
   export let showLoadButtons: boolean = false;
   export let emptyMessage: string = "";
@@ -35,7 +35,7 @@
   let packageTools: string[] = [];
 
   // Determine if action buttons should be shown
-  $: showActions = mode === "Developer" || showLoadButtons;
+  $: showActions = mode === "Config" || showLoadButtons;
 
   function toggleExpand() {
     expanded = !expanded;
@@ -124,7 +124,7 @@
       {/if}
       <h2>{title}</h2>
     </div>
-    {#if showCreateNew && mode === "Developer"}
+    {#if showCreateNew && mode === "Config"}
       <button
         class="create-button"
         on:click={onCreate}

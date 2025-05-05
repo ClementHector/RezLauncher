@@ -12,7 +12,7 @@ rezLauncher is a desktop application designed to streamline workflow management 
 - **Stage Management**: Create stages from package collections and track their history
 - **Tool Loading**: Launch tools associated with package collections or stages
 - **URI-based Navigation**: Navigate through projects, modeling types, and applications with a hierarchical URI system
-- **User Modes**: Switch between Default and Developer modes with different feature sets
+- **Modes**: Switch between Launcher and Config modes with different feature sets
 - **Dark/Light Theme**: Toggle between dark and light themes for comfortable viewing in any environment
 - **Logging System**: Built-in logging to track operations and system status
 

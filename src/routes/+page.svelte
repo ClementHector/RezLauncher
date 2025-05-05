@@ -4,11 +4,9 @@
   import PackageModal from "$lib/components/PackageModal.svelte";
   import RevertModal from "$lib/components/RevertModal.svelte";
 
-  // State management
-  let mode = $state("Developer");
+  let mode = $state("Config");
   let theme = $state("Light");
 
-  // Define type for log entries
   type LogEntry = {
     message: string;
     type: "info" | "success" | "warning" | "error";
@@ -17,18 +15,17 @@
 
   let logs = $state<LogEntry[]>([]);
   let packageModalOpen = $state(false);
-  let revertModalOpen = $state(false); // New state for revert modal
+  let revertModalOpen = $state(false);
   let isEditingPackage = $state(false);
   let currentPackageData = $state<PackageCollection | null>(null);
-  let currentStageName = $state(""); // New state for storing current stage name
-  let currentStageUri = $state(""); // New state for storing current stage URI
+  let currentStageName = $state("");
+  let currentStageUri = $state("");
   let currentUsername = $state("");
   let packageCollections = $state<PackageCollection[]>([]);
   let packageCollectionMessage = $state("");
   let stageMessage = $state("");
   let allUris = $state<string[]>([]);
 
-  // Define types for our data structures
   type Package = {
     version: string;
     baked: boolean;
@@ -615,12 +612,12 @@
     <div class="mode-selection">
       <span>Mode:</span>
       <label>
-        <input type="radio" bind:group={mode} value="Default">
-        Default
+        <input type="radio" bind:group={mode} value="Launcher">
+        Launcher
       </label>
       <label>
-        <input type="radio" bind:group={mode} value="Developer">
-        Developer
+        <input type="radio" bind:group={mode} value="Config">
+        Config
       </label>
       <label class="theme-toggle">
         <input type="checkbox" checked={theme === "Dark"} onchange={toggleDarkMode}>
@@ -630,7 +627,7 @@
   </header>
 
   <nav class="breadcrumb">
-    <span class="uri-label">URI:</span>
+    <span class="uri-label">LAYERS:</span>
 
     {#if isAddingProjectOption}
       <div class="add-option-form">
@@ -806,7 +803,7 @@
         onRefresh={refreshStages}
       />
 
-      {#if mode === "Developer"}
+      {#if mode === "Config"}
         <SectionPanel
           title="Package Collections"
           items={packages}
