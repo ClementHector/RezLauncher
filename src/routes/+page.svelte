@@ -6,7 +6,7 @@
   import MongoDBConfigModal from "$lib/components/MongoDBConfigModal.svelte";
   import { getCookie, setCookie } from "$lib/utils/cookies";
 
-  let mode = $state("Config");
+  let mode = $state("Launcher");
   let theme = $state("Light");
 
   type LogEntry = {
@@ -291,18 +291,18 @@
       const selectedStage = stages.find(stage => stage.name === stageName);
       if (selectedStage && selectedStage.id) {
         addLog(`Opening rez environment for stage "${stageName}" using RXT file`, "info");
-        
+
         // Extract the MongoDB ObjectId string correctly
         // Handle different possible formats of the ObjectId
         let stageIdString;
-        
+
         if (typeof selectedStage.id === 'string') {
           // If already a string, use it directly
           stageIdString = selectedStage.id;
         } else if (selectedStage.id.$oid) {
           // MongoDB ObjectId in JSON format: { $oid: "hexstring" }
           stageIdString = selectedStage.id.$oid;
-        } else if (selectedStage.id.toString && typeof selectedStage.id.toString === 'function' && 
+        } else if (selectedStage.id.toString && typeof selectedStage.id.toString === 'function' &&
                   selectedStage.id.toString() !== '[object Object]') {
           // If it has a custom toString method (MongoDB ObjectId object)
           stageIdString = selectedStage.id.toString();
@@ -311,14 +311,14 @@
           addLog(`Stage ID has unexpected format: ${JSON.stringify(selectedStage.id)}`, "warning");
           throw new Error(`Cannot extract valid ID from stage object: ${JSON.stringify(selectedStage.id)}`);
         }
-        
+
         addLog(`Using stage ID: ${stageIdString}`, "info");
-        
+
         // Call the Rust function to load the stage using its RXT content
         await invoke("load_stage_by_id", {
           stageId: stageIdString
         });
-        
+
         addLog(`Rez environment loaded for stage: ${stageName}`, "success");
       } else {
         addLog(`Stage "${stageName}" not found or has no ID`, "error");

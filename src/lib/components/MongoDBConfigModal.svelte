@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   import { createEventDispatcher } from 'svelte';
   import { invoke } from "@tauri-apps/api/tauri";
   import { getCookie, setCookie } from "../utils/cookies";
@@ -61,13 +61,13 @@
     dispatch('close');
   }
 
-  function handleBackdropClick(e) {
+  function handleBackdropClick(e: MouseEvent) {
     if (e.target === e.currentTarget) {
       close();
     }
   }
 
-  function handleModalKeydown(e) {
+  function handleModalKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
       close();
     }
@@ -203,6 +203,7 @@
     font-size: 16px;
     background-color: var(--card-background, white);
     color: var(--text-color, #333);
+    box-sizing: border-box; /* Add this line */
   }
 
   .form-group small {
