@@ -290,7 +290,7 @@
   }
 
   .package-header {
-    background-color: rgb(255, 69, 69);
+    background-color: red;
   }
 
   .title-container {

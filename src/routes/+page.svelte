@@ -863,20 +863,6 @@
 
   <div class="content-area">
     <div class="left-panel">
-      {#if mode === "Launcher"}
-        <SectionPanel
-          title="Stages"
-          items={stages}
-          expandable={true}
-          mode={mode}
-          emptyMessage={stageMessage}
-          onLoad={loadStage}
-          onRevert={revertStage}
-          onClick={handleStageClick}
-          onRefresh={refreshStages}
-        />
-      {/if}
-
       {#if mode === "Config"}
         <SectionPanel
           title="Package Collections"
@@ -894,6 +880,18 @@
           on:bake-complete={handleBakeComplete}
         />
       {/if}
+      
+      <SectionPanel
+        title="Stages"
+        items={stages}
+        expandable={true}
+        mode={mode}
+        emptyMessage={stageMessage}
+        onLoad={loadStage}
+        onRevert={revertStage}
+        onClick={handleStageClick}
+        onRefresh={refreshStages}
+      />
     </div>
 
     <div class="right-panel">
