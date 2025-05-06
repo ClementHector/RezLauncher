@@ -13,12 +13,17 @@
     version: '',
     packages: [] as string[],
     herit: '',
-    tools: [] as string[]
+    tools: [] as string[],
+    environment_variables: [] as { key: string, value: string }[]
   };
 
   // Current input values for tags
   let currentPackageInput = '';
   let currentToolInput = '';
+  
+  // Current input values for environment variables
+  let currentEnvKey = '';
+  let currentEnvValue = '';
 
   // Initialize form with package data if provided
   $: if (packageData && isOpen) {
@@ -30,10 +35,13 @@
       version: packageData?.version || '',
       packages: packageData?.packages ? [...packageData.packages] : [],
       herit: packageData?.herit || '',
-      tools: packageData?.tools ? [...packageData.tools] : []
+      tools: packageData?.tools ? [...packageData.tools] : [],
+      environment_variables: packageData?.environment_variables ? [...packageData.environment_variables] : []
     };
     currentPackageInput = '';
     currentToolInput = '';
+    currentEnvKey = '';
+    currentEnvValue = '';
   }
 
   // Reset form on close
@@ -47,10 +55,13 @@
       version: '',
       packages: [],
       herit: '',
-      tools: []
+      tools: [],
+      environment_variables: []
     };
     currentPackageInput = '';
     currentToolInput = '';
+    currentEnvKey = '';
+    currentEnvValue = '';
   }
 
   // Close modal and reset form
@@ -88,6 +99,30 @@
     }
   }
 
+  // Add environment variable
+  function addEnvVar() {
+    if (currentEnvKey.trim() && currentEnvValue.trim()) {
+      // Check if the key already exists
+      const existingIndex = formData.environment_variables.findIndex(v => v.key === currentEnvKey.trim());
+      
+      if (existingIndex >= 0) {
+        // Update existing variable
+        formData.environment_variables[existingIndex].value = currentEnvValue.trim();
+        formData.environment_variables = [...formData.environment_variables]; // Trigger reactive update
+      } else {
+        // Add new variable
+        formData.environment_variables = [...formData.environment_variables, { 
+          key: currentEnvKey.trim(), 
+          value: currentEnvValue.trim() 
+        }];
+      }
+      
+      // Clear inputs
+      currentEnvKey = '';
+      currentEnvValue = '';
+    }
+  }
+
   // Remove a package tag
   function removePackage(index: number) {
     formData.packages = formData.packages.filter((_, i) => i !== index);
@@ -96,6 +131,11 @@
   // Remove a tool tag
   function removeTool(index: number) {
     formData.tools = formData.tools.filter((_, i) => i !== index);
+  }
+
+  // Remove environment variable
+  function removeEnvVar(index: number) {
+    formData.environment_variables = formData.environment_variables.filter((_, i) => i !== index);
   }
 
   // Submit form
@@ -117,12 +157,18 @@
       addTool();
     }
 
+    // Add any remaining env var input
+    if (currentEnvKey.trim() && currentEnvValue.trim()) {
+      addEnvVar();
+    }
+
     // Prepare and dispatch form data
     const submitData = {
       version: formData.version,
       packages: formData.packages,
       herit: formData.herit,
       tools: formData.tools,
+      environment_variables: formData.environment_variables,
       // Include original data for identification during update
       originalData: packageData
     };
@@ -207,6 +253,50 @@
             />
           </div>
           <small>Press Enter or comma to add multiple tools</small>
+        </div>
+
+        <div class="form-group">
+          <label for="env-var-key">Environment Variables:</label>
+          <div class="env-vars-container">
+            {#if formData.environment_variables.length > 0}
+              <div class="env-vars-list">
+                {#each formData.environment_variables as envVar, index}
+                  <div class="env-var-item">
+                    <span class="env-var-key">{envVar.key}</span>
+                    <span class="env-var-equals">=</span>
+                    <span class="env-var-value">{envVar.value}</span>
+                    <button 
+                      type="button" 
+                      class="env-var-remove" 
+                      on:click={() => removeEnvVar(index)}
+                    >×</button>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+            <div class="env-var-input-row">
+              <input
+                type="text"
+                id="env-var-key"
+                placeholder="Key"
+                bind:value={currentEnvKey}
+              />
+              <span class="env-var-equals">=</span>
+              <input
+                type="text"
+                id="env-var-value"
+                placeholder="Value"
+                bind:value={currentEnvValue}
+              />
+              <button 
+                type="button" 
+                class="env-var-add"
+                on:click={addEnvVar}
+                disabled={!currentEnvKey.trim() || !currentEnvValue.trim()}
+              >+</button>
+            </div>
+          </div>
+          <small>Add environment variables as key-value pairs</small>
         </div>
 
         <div class="form-actions">
@@ -371,6 +461,83 @@
     background-color: #0077aa;
   }
 
+  /* Environment Variables Styles */
+  .env-vars-container {
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 10px;
+    margin-bottom: 5px;
+  }
+
+  .env-vars-list {
+    margin-bottom: 10px;
+    max-height: 150px;
+    overflow-y: auto;
+  }
+
+  .env-var-item {
+    display: flex;
+    align-items: center;
+    background-color: #f0f8ff;
+    padding: 5px 8px;
+    border-radius: 4px;
+    margin-bottom: 5px;
+  }
+
+  .env-var-key {
+    font-weight: 500;
+    color: #0066cc;
+  }
+
+  .env-var-equals {
+    margin: 0 6px;
+    color: #666;
+  }
+
+  .env-var-value {
+    flex-grow: 1;
+    word-break: break-all;
+  }
+
+  .env-var-remove {
+    background: none;
+    border: none;
+    color: #cc0000;
+    font-size: 16px;
+    cursor: pointer;
+    padding: 0 5px;
+  }
+
+  .env-var-input-row {
+    display: flex;
+    align-items: center;
+  }
+
+  .env-var-input-row input {
+    flex: 1;
+    padding: 6px 8px;
+  }
+
+  .env-var-add {
+    background-color: #0099cc;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    width: 28px;
+    height: 28px;
+    font-size: 16px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: 6px;
+  }
+
+  .env-var-add:disabled {
+    background-color: #cccccc;
+    cursor: not-allowed;
+  }
+
   /* Dark mode support */
   :global(.theme-dark) .modal {
     background-color: #3f3f3f;
@@ -409,5 +576,33 @@
 
   :global(.theme-dark) .tag {
     background-color: #007799;
+  }
+
+  :global(.theme-dark) .env-vars-container {
+    border-color: #4a4a4a;
+  }
+
+  :global(.theme-dark) .env-var-item {
+    background-color: #2d3748;
+  }
+
+  :global(.theme-dark) .env-var-key {
+    color: #63b3ed;
+  }
+
+  :global(.theme-dark) .env-var-equals {
+    color: #a0aec0;
+  }
+
+  :global(.theme-dark) .env-var-add {
+    background-color: #2b6cb0;
+  }
+
+  :global(.theme-dark) .env-var-add:disabled {
+    background-color: #4a5568;
+  }
+
+  :global(.theme-dark) .env-var-remove {
+    color: #fc8181;
   }
 </style>

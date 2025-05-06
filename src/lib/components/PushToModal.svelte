@@ -9,12 +9,16 @@
 
   let existingStageNames: string[] = [];
   let selectedTargetStageName: string = '';
+  let newStageName: string = '';
+  let useNewStageName: boolean = false;
   let loading: boolean = true;
   let error: string | null = null;
   let currentUsername: string = 'unknown';
 
   $: if (!isOpen) {
     selectedTargetStageName = '';
+    newStageName = '';
+    useNewStageName = false;
     error = null;
     loading = true;
   }
@@ -32,10 +36,8 @@
       const names = await invoke<string[]>('get_all_stage_names');
       existingStageNames = names.filter(name => name !== stageData?.name);
 
-      if (existingStageNames.length > 0) {
-      } else {
-        error = "No other existing stages found to push to.";
-      }
+      // We don't set an error anymore when no existing stages found
+      // That way user can create a new stage even when there's only one stage
 
       loading = false;
     } catch (err) {
@@ -50,10 +52,15 @@
   }
 
   async function handlePush() {
-    if (!selectedTargetStageName) {
-      error = "Please select a target stage name.";
+    const targetName = useNewStageName ? newStageName.trim() : selectedTargetStageName;
+
+    if (!targetName) {
+      error = useNewStageName
+        ? "Please enter a name for the new stage."
+        : "Please select a target stage name.";
       return;
     }
+
     if (!stageData) {
       error = "Source stage data is missing.";
       return;
@@ -63,18 +70,20 @@
     error = null;
 
     try {
+      // Create a copy of stageData with the necessary fields
       const newStageData = {
         ...stageData,
-        name: selectedTargetStageName,
+        name: targetName,
         active: true,
         created_at: new Date().toISOString(),
         created_by: currentUsername,
+        // Ensure rxt field is always a string, not an empty object
+        rxt: stageData.rxt || "",
         _id: undefined,
         id: undefined,
       };
 
       delete newStageData._id;
-
 
       console.log("Pushing new stage data:", newStageData);
 
@@ -84,7 +93,7 @@
 
       dispatch('push-complete', {
         success: true,
-        targetStageName: selectedTargetStageName
+        targetStageName: targetName
       });
 
       handleClose();
@@ -114,27 +123,54 @@
     <div class="modal-body">
       {#if loading}
         <div class="loading">Loading...</div>
-      {:else if error && existingStageNames.length === 0}
-         <div class="error-message">{error}</div>
-         <div class="form-actions">
-           <button type="button" class="cancel-button" on:click={handleClose}>Close</button>
-         </div>
       {:else}
-        <p class="instructions">Select an existing stage name to push the current configuration of '{stageData?.name}' to:</p>
+        <p class="instructions">Push the current configuration of '{stageData?.name}' to:</p>
 
-        <div class="form-group">
-          <label for="target-stage-select">Target Stage Name:</label>
-          <select
-            id="target-stage-select"
-            bind:value={selectedTargetStageName}
-            disabled={existingStageNames.length === 0}
+        <div class="option-toggles">
+          <button
+            class="option-button"
+            class:selected={!useNewStageName}
+            on:click={() => useNewStageName = false}
           >
-            <option value="" disabled selected>-- Select a stage --</option>
-            {#each existingStageNames as name}
-              <option value={name}>{name}</option>
-            {/each}
-          </select>
+            Use Existing Stage
+          </button>
+          <button
+            class="option-button"
+            class:selected={useNewStageName}
+            on:click={() => useNewStageName = true}
+          >
+            Create New Stage
+          </button>
         </div>
+
+        {#if useNewStageName}
+          <div class="form-group">
+            <label for="new-stage-name">New Stage Name:</label>
+            <input
+              id="new-stage-name"
+              type="text"
+              bind:value={newStageName}
+              placeholder="Enter new stage name"
+            />
+          </div>
+        {:else}
+          <div class="form-group">
+            <label for="target-stage-select">Target Stage Name:</label>
+            {#if existingStageNames.length > 0}
+              <select
+                id="target-stage-select"
+                bind:value={selectedTargetStageName}
+              >
+                <option value="" disabled selected>-- Select a stage --</option>
+                {#each existingStageNames as name}
+                  <option value={name}>{name}</option>
+                {/each}
+              </select>
+            {:else}
+              <div class="info-message">No other existing stages found. You can create a new stage instead.</div>
+            {/if}
+          </div>
+        {/if}
 
         {#if error}
           <div class="error-message">{error}</div>
@@ -146,7 +182,7 @@
             type="button"
             class="submit-button"
             on:click={handlePush}
-            disabled={!selectedTargetStageName || loading}
+            disabled={(useNewStageName ? !newStageName : !selectedTargetStageName && existingStageNames.length > 0) || loading}
           >
             OK
           </button>
@@ -214,6 +250,28 @@
     color: #333;
   }
 
+  .option-toggles {
+    display: flex;
+    margin-bottom: 20px;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .option-button {
+    flex: 1;
+    padding: 8px 12px;
+    background-color: #f0f0f0;
+    border: 1px solid #ccc;
+    cursor: pointer;
+    transition: background-color 0.2s;
+  }
+
+  .option-button.selected {
+    background-color: #0099cc;
+    color: white;
+    border-color: #0099cc;
+  }
+
   .form-group {
     margin-bottom: 20px;
   }
@@ -225,7 +283,8 @@
     font-weight: 500;
   }
 
-  .form-group select {
+  .form-group select,
+  .form-group input {
     width: 100%;
     padding: 8px 10px;
     border: 1px solid #ccc;
@@ -237,6 +296,15 @@
   .form-group select:disabled {
     background-color: #f0f0f0;
     cursor: not-allowed;
+  }
+
+  .info-message {
+    padding: 10px;
+    background-color: #e7f5fe;
+    border: 1px solid #bbe1fa;
+    border-radius: 4px;
+    color: #31708f;
+    font-size: 13px;
   }
 
   /* Status messages */
@@ -307,14 +375,29 @@
   :global(.theme-dark) .close-button { color: #ccc; }
   :global(.theme-dark) .instructions { color: #ddd; }
   :global(.theme-dark) .form-group label { color: #eee; }
-  :global(.theme-dark) .form-group select {
+  :global(.theme-dark) .form-group select,
+  :global(.theme-dark) .form-group input {
     background-color: #555;
     border-color: #666;
     color: #eee;
   }
-   :global(.theme-dark) .form-group select:disabled {
-     background-color: #4a4a4a;
-   }
+  :global(.theme-dark) .form-group select:disabled {
+    background-color: #4a4a4a;
+  }
+  :global(.theme-dark) .info-message {
+    background-color: #31474f;
+    border-color: #356980;
+    color: #bbe1fa;
+  }
+  :global(.theme-dark) .option-button {
+    background-color: #444;
+    border-color: #555;
+    color: #eee;
+  }
+  :global(.theme-dark) .option-button.selected {
+    background-color: #0088bb;
+    border-color: #0099cc;
+  }
   :global(.theme-dark) .error-message {
     background-color: #5a3e3e;
     border-color: #7a5a5a;

@@ -6,19 +6,21 @@ use mongodb::bson::{doc, oid::ObjectId, Bson};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use chrono::Utc;
 use std::sync::{Arc, Mutex};
-use std::fs::{OpenOptions, File};
+use std::fs::{self, OpenOptions, File};
 use std::io::Write;
+use std::process::Command;
+use rand::Rng;
 use tauri::State;
 use futures::stream::StreamExt;
-// Remove conditional import
-// #[cfg(test)]
-// use mockall::automock;
+use once_cell::sync::Lazy;
 
-// Application constants
+// Configuration par défaut de MongoDB (utilisée si aucune configuration n'est fournie)
+const DEFAULT_MONGO_URI: &str = "mongodb://localhost:27017";
 const DB_NAME: &str = "rez_launcher";
-const MONGO_URI: &str = "mongodb://localhost:27017";
 
-// Use full path in cfg_attr
+// Variable globale pour stocker l'URI MongoDB actuelle
+static MONGO_URI: Lazy<Mutex<String>> = Lazy::new(|| Mutex::new(DEFAULT_MONGO_URI.to_string()));
+
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
 trait DbRepository: Send + Sync {
@@ -35,19 +37,16 @@ trait DbRepository: Send + Sync {
     async fn find_distinct_stage_names(&self) -> Result<Vec<String>, String>;
 }
 
-// --- MongoDB Implementation ---
 struct MongoDbRepository {
     db: Database,
-    log_state: LogState, // Keep log state for logging within the repo
+    log_state: LogState,
 }
 
 impl MongoDbRepository {
-    // Helper to get a specific collection
     fn get_collection<T>(&self, name: &str) -> Collection<T> {
         self.db.collection::<T>(name)
     }
 
-    // Reusable document fetching logic, now part of the concrete implementation
     async fn fetch_documents_internal<T>(
         &self,
         collection_name: &str,
@@ -75,9 +74,6 @@ impl MongoDbRepository {
         {
             let doc_count = documents.len();
             log_message(&self.log_state, format!("{}: {} documents retrieved.", log_msg_prefix, doc_count));
-            if doc_count < 5 {
-                 log_message(&self.log_state, format!("First few documents: {:?}", documents.iter().take(5).collect::<Vec<_>>()));
-            }
         }
         #[cfg(not(debug_assertions))]
         log_message(&self.log_state, format!("{}: {}", log_msg_prefix, documents.len()));
@@ -207,16 +203,13 @@ impl DbRepository for MongoDbRepository {
     }
 }
 
-// App state for logging
 struct LogState(Mutex<File>);
 
-// Add Repository State
 struct AppState {
     db_repo: Arc<dyn DbRepository>,
-    log_state: LogState, // Keep LogState accessible if needed directly by commands/setup
+    log_state: LogState,
 }
 
-// Data structures
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct PackageCollection {
     version: String,
@@ -235,7 +228,7 @@ struct Stage {
     name: String,
     uri: String,
     from_version: String,
-    rxt_path: String,
+    rxt: String,
     tools: Vec<String>,
     created_at: String,
     created_by: String,
@@ -249,7 +242,6 @@ struct PackageCollectionResult {
     collections: Option<Vec<PackageCollection>>,
 }
 
-// Utility functions
 fn log_message(log_state: &LogState, message: String) {
     let mut log_file = match log_state.0.lock() {
         Ok(file) => file,
@@ -274,7 +266,6 @@ fn init_log_file() -> Result<File, String> {
     let temp_dir = std::env::temp_dir();
     let log_dir = temp_dir.join("rezlauncher_logs");
 
-    // Remove unnecessary parentheses again
     if !log_dir.exists() {
         std::fs::create_dir_all(&log_dir).map_err(|e| e.to_string())?;
     }
@@ -290,11 +281,8 @@ fn init_log_file() -> Result<File, String> {
         .map_err(|e| format!("Failed to open log file: {}", e))
 }
 
-// Tauri commands
 #[tauri::command]
 async fn init_command() -> Result<bool, String> {
-    // This command might become redundant or just return true
-    // Initialization happens in main/setup now
     Ok(true)
 }
 
@@ -316,7 +304,43 @@ async fn save_stage_to_mongodb(
     stage_data: Stage,
     state: State<'_, AppState>,
 ) -> Result<bool, String> {
-    // First, update all existing stages with the same name to set active = false
+    // First, find the source package collection to get the list of packages
+    let source_package = state.db_repo.find_package_collections_by_uri(&stage_data.uri)
+        .await?
+        .into_iter()
+        .find(|pkg| pkg.version == stage_data.from_version);
+
+    let packages = match source_package {
+        Some(pkg) => pkg.packages,
+        None => {
+            let error_msg = format!("Package collection {} not found for RXT generation", stage_data.from_version);
+            log_message(&state.log_state, error_msg.clone());
+            return Err(error_msg);
+        }
+    };
+
+    // Generate the RXT file content from the package list
+    log_message(
+        &state.log_state,
+        format!("Generating RXT file for stage '{}' with {} packages", stage_data.name, packages.len())
+    );
+
+    let rxt_content = match generate_rxt_file(&packages, &state.log_state).await {
+        Ok(content) => {
+            log_message(
+                &state.log_state,
+                format!("Successfully generated RXT file for stage '{}'", stage_data.name)
+            );
+            content
+        },
+        Err(e) => {
+            let error_msg = format!("Failed to generate RXT file: {}", e);
+            log_message(&state.log_state, error_msg.clone());
+            return Err(error_msg);
+        }
+    };
+
+    // Set all existing stages with the same name and URI to inactive
     state.db_repo.update_stages_active_status(&stage_data.name, &stage_data.uri, false).await?;
 
     log_message(
@@ -324,14 +348,16 @@ async fn save_stage_to_mongodb(
         format!("Set active=false for all existing stages with name '{}' via repository", stage_data.name)
     );
 
-    // Now insert the new stage (ensure it's marked active)
+    // Create the new stage with the RXT content and set it to active
     let mut stage_to_insert = stage_data.clone();
-    stage_to_insert.active = true; // Ensure the new stage is active
+    stage_to_insert.active = true;
+    stage_to_insert.rxt = rxt_content;
+
     state.db_repo.insert_stage(stage_to_insert).await?;
 
     log_message(
         &state.log_state,
-        format!("Stage '{}' saved via repository", stage_data.name)
+        format!("Stage '{}' saved via repository with RXT content", stage_data.name)
     );
 
     Ok(true)
@@ -342,10 +368,8 @@ async fn get_package_collections_by_uri(
     uri: String,
     state: State<'_, AppState>,
 ) -> Result<PackageCollectionResult, String> {
-    // Call the repository method
     let packages = state.db_repo.find_package_collections_by_uri(&uri).await?;
 
-    // Construct the result object
     if packages.is_empty() {
         Ok(PackageCollectionResult {
             success: true,
@@ -365,10 +389,8 @@ async fn get_package_collections_by_uri(
 async fn get_all_package_collections(
     state: State<'_, AppState>,
 ) -> Result<PackageCollectionResult, String> {
-     // Call the repository method
     let packages = state.db_repo.find_all_package_collections().await?;
 
-    // Construct the result object
     if packages.is_empty() {
         Ok(PackageCollectionResult {
             success: true,
@@ -418,7 +440,6 @@ async fn revert_stage(
 ) -> Result<bool, String> {
     let object_id = ObjectId::parse_str(&stage_id).map_err(|e| e.to_string())?;
 
-    // Find the stage to activate
     let stage_to_activate = state.db_repo.find_stage_by_id(object_id).await?
         .ok_or_else(|| "Stage not found".to_string())?;
 
@@ -430,7 +451,6 @@ async fn revert_stage(
         format!("Reverting stage '{}' with URI '{}' via repository", stage_name, stage_uri)
     );
 
-    // Set all stages with the same name/uri to inactive
     state.db_repo.update_stages_active_status(&stage_name, &stage_uri, false).await?;
 
     log_message(
@@ -438,7 +458,6 @@ async fn revert_stage(
         format!("Set active=false for all existing stages with name '{}' via repository", stage_name)
     );
 
-    // Set the selected stage to active
     state.db_repo.update_stage_active_status_by_id(object_id, true).await?;
 
     log_message(
@@ -460,7 +479,6 @@ async fn get_stage_history(
 
 #[tauri::command]
 fn get_current_username() -> Result<String, String> {
-    // No change needed
     std::env::var("USERNAME")
         .or_else(|_| std::env::var("USER"))
         .map_err(|e| format!("Failed to get username: {}", e))
@@ -473,6 +491,261 @@ async fn get_all_stage_names(
     state.db_repo.find_distinct_stage_names().await
 }
 
+#[tauri::command]
+async fn open_tool_in_terminal(tool_name: String, packages: Vec<String>, state: State<'_, AppState>) -> Result<bool, String> {
+    log_message(&state.log_state, format!("Attempting to open tool: {} with packages: {:?}", tool_name, packages));
+
+    // Construire la commande rez env avec la liste des packages
+    let packages_str = packages.join(" ");
+    let rez_command = format!("rez env {} -- {}", packages_str, tool_name);
+    log_message(&state.log_state, format!("Executing rez command: {}", rez_command));
+
+    let mut command = if cfg!(target_os = "windows") {
+        let mut cmd = std::process::Command::new("cmd");
+        cmd.arg("/c").arg(&rez_command);
+        cmd
+    } else {
+        let mut cmd = std::process::Command::new("sh");
+        cmd.arg("-c").arg(&rez_command);
+        cmd
+    };
+
+    match command.spawn() {
+        Ok(_) => {
+            log_message(&state.log_state, format!("Tool launched successfully in rez environment: {}", tool_name));
+            Ok(true)
+        },
+        Err(e) => {
+            log_message(&state.log_state, format!("Failed to launch tool in rez environment: {}", e));
+            Err(format!("Failed to launch tool in rez environment: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
+async fn open_rez_env_in_terminal(packages: Vec<String>, state: State<'_, AppState>) -> Result<bool, String> {
+    log_message(&state.log_state, format!("Attempting to open rez environment with packages: {:?}", packages));
+
+    // Construire la commande rez env avec la liste des packages
+    let packages_str = packages.join(" ");
+    let rez_command = format!("rez env {}", packages_str);
+    log_message(&state.log_state, format!("Executing rez command in new terminal: {}", rez_command));
+
+    let mut command = if cfg!(target_os = "windows") {
+        // Sur Windows, utiliser "start cmd" pour ouvrir une nouvelle fenêtre de terminal
+        let mut cmd = std::process::Command::new("cmd");
+        cmd.arg("/c").arg("start").arg("cmd").arg("/k").arg(&rez_command);
+        cmd
+    } else {
+        // Sur Linux/Mac, utiliser xterm ou terminal
+        let terminal_cmd = if std::path::Path::new("/usr/bin/xterm").exists() {
+            "xterm"
+        } else if std::path::Path::new("/usr/bin/gnome-terminal").exists() {
+            "gnome-terminal"
+        } else {
+            "x-terminal-emulator"
+        };
+
+        let mut cmd = std::process::Command::new(terminal_cmd);
+        cmd.arg("-e").arg(format!("bash -c '{} && bash'", rez_command));
+        cmd
+    };
+
+    match command.spawn() {
+        Ok(_) => {
+            log_message(&state.log_state, format!("Rez environment opened successfully in new terminal with packages: {}", packages_str));
+            Ok(true)
+        },
+        Err(e) => {
+            log_message(&state.log_state, format!("Failed to open rez environment in new terminal: {}", e));
+            Err(format!("Failed to open rez environment in new terminal: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
+async fn test_mongodb_connection(mongo_uri: String) -> Result<bool, String> {
+    // Mettre à jour l'URI globale si la connexion réussit
+    match ClientOptions::parse(&mongo_uri).await {
+        Ok(options) => {
+            match Client::with_options(options) {
+                Ok(client) => {
+                    // Tester la connexion avec un ping
+                    match client.database("admin").run_command(doc! {"ping": 1}, None).await {
+                        Ok(_) => {
+                            // Connexion réussie, mettre à jour l'URI globale
+                            let mut current_uri = MONGO_URI.lock().unwrap();
+                            *current_uri = mongo_uri;
+                            Ok(true)
+                        },
+                        Err(e) => {
+                            Err(format!("Échec du ping MongoDB: {}", e))
+                        }
+                    }
+                },
+                Err(e) => {
+                    Err(format!("Impossible de créer le client MongoDB: {}", e))
+                }
+            }
+        },
+        Err(e) => {
+            Err(format!("URI MongoDB invalide: {}", e))
+        }
+    }
+}
+
+// Generate an RXT file from a list of packages using the rez env command
+// Returns the content of the RXT file as a string
+async fn generate_rxt_file(packages: &[String], log_state: &LogState) -> Result<String, String> {
+    log_message(log_state, format!("Generating RXT file for packages: {:?}", packages));
+
+    // Create a temporary file path
+    let temp_dir = std::env::temp_dir();
+    let timestamp = Utc::now().format("%Y%m%d_%H%M%S").to_string();
+    let random_suffix: String = rand::thread_rng()
+        .sample_iter(rand::distributions::Alphanumeric)
+        .take(8)
+        .map(char::from)
+        .collect();
+
+    let temp_file_path = temp_dir.join(format!("rez_env_{}_{}.rxt", timestamp, random_suffix));
+    let temp_file_path_str = temp_file_path.to_string_lossy().to_string();
+
+    log_message(log_state, format!("Using temporary file: {}", temp_file_path_str));
+
+    // Build the rez env command
+    let packages_str = packages.join(" ");
+    let rez_command = format!("rez env {} -o {}", packages_str, temp_file_path_str);
+    log_message(log_state, format!("Executing rez command: {}", rez_command));
+
+    // Execute the command
+    let output = if cfg!(target_os = "windows") {
+        Command::new("cmd")
+            .arg("/c")
+            .arg(&rez_command)
+            .output()
+    } else {
+        Command::new("sh")
+            .arg("-c")
+            .arg(&rez_command)
+            .output()
+    };
+
+    // Check if command execution was successful
+    match output {
+        Ok(output) => {
+            if !output.status.success() {
+                let error = String::from_utf8_lossy(&output.stderr).to_string();
+                log_message(log_state, format!("Failed to generate RXT file: {}", error));
+                return Err(format!("Failed to generate RXT file: {}", error));
+            }
+
+            // Read the content of the generated RXT file
+            match fs::read_to_string(&temp_file_path) {
+                Ok(content) => {
+                    log_message(log_state, format!("Successfully read RXT file (size: {} bytes)", content.len()));
+
+                    // Delete the temporary file
+                    if let Err(e) = fs::remove_file(&temp_file_path) {
+                        log_message(log_state, format!("Warning: Failed to delete temporary RXT file: {}", e));
+                    } else {
+                        log_message(log_state, format!("Deleted temporary RXT file: {}", temp_file_path_str));
+                    }
+
+                    Ok(content)
+                },
+                Err(e) => {
+                    log_message(log_state, format!("Failed to read RXT file: {}", e));
+                    Err(format!("Failed to read RXT file: {}", e))
+                }
+            }
+        },
+        Err(e) => {
+            log_message(log_state, format!("Failed to execute rez command: {}", e));
+            Err(format!("Failed to execute rez command: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
+async fn load_stage_by_id(
+    stage_id: String,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    // Parse the ObjectId
+    let object_id = ObjectId::parse_str(&stage_id).map_err(|e| e.to_string())?;
+
+    // Find the stage by ID
+    let stage = state.db_repo.find_stage_by_id(object_id).await?
+        .ok_or_else(|| "Stage not found".to_string())?;
+
+    log_message(
+        &state.log_state,
+        format!("Loading stage '{}' with ID '{}'", stage.name, stage_id)
+    );
+
+    if stage.rxt.is_empty() {
+        return Err("Stage has no RXT content".to_string());
+    }
+
+    // Create a temporary file for the RXT content
+    let temp_dir = std::env::temp_dir();
+    let timestamp = Utc::now().format("%Y%m%d_%H%M%S").to_string();
+    let random_suffix: String = rand::thread_rng()
+        .sample_iter(rand::distributions::Alphanumeric)
+        .take(8)
+        .map(char::from)
+        .collect();
+
+    let temp_file_path = temp_dir.join(format!("rez_stage_{}_{}.rxt", timestamp, random_suffix));
+    let temp_file_path_str = temp_file_path.to_string_lossy().to_string();
+
+    log_message(&state.log_state, format!("Saving RXT content to temporary file: {}", temp_file_path_str));
+
+    // Write the RXT content to the temporary file
+    fs::write(&temp_file_path, &stage.rxt)
+        .map_err(|e| format!("Failed to write RXT content to file: {}", e))?;
+
+    // Build the rez command to load the RXT environment
+    let rez_command = format!("rez env -i {}", temp_file_path_str);
+    log_message(&state.log_state, format!("Executing rez command: {}", rez_command));
+
+    // Execute the command in a new terminal
+    let mut command = if cfg!(target_os = "windows") {
+        let mut cmd = std::process::Command::new("cmd");
+        cmd.arg("/c").arg("start").arg("cmd").arg("/k").arg(&rez_command);
+        cmd
+    } else {
+        // On Linux/Mac, use xterm or terminal
+        let terminal_cmd = if std::path::Path::new("/usr/bin/xterm").exists() {
+            "xterm"
+        } else if std::path::Path::new("/usr/bin/gnome-terminal").exists() {
+            "gnome-terminal"
+        } else {
+            "x-terminal-emulator"
+        };
+
+        let mut cmd = std::process::Command::new(terminal_cmd);
+        cmd.arg("-e").arg(format!("bash -c '{} && bash'", rez_command));
+        cmd
+    };
+
+    match command.spawn() {
+        Ok(_) => {
+            log_message(
+                &state.log_state,
+                format!("Rez environment loaded successfully for stage '{}' using RXT file", stage.name)
+            );
+            Ok(true)
+        },
+        Err(e) => {
+            let error_msg = format!("Failed to launch rez environment: {}", e);
+            log_message(&state.log_state, error_msg.clone());
+            Err(error_msg)
+        }
+    }
+}
+
 fn main() {
     let log_file = match init_log_file() {
         Ok(file) => file,
@@ -483,26 +756,54 @@ fn main() {
     };
     let log_state = LogState(Mutex::new(log_file));
 
-    // Create the AppState - requires async context for DB connection
     let app_state = tauri::async_runtime::block_on(async {
-        let client_options = ClientOptions::parse(MONGO_URI)
-            .await
-            .expect("Failed to parse MongoDB URI"); // Handle error better in real app
-        let client = Client::with_options(client_options)
-            .expect("Failed to create MongoDB client"); // Handle error better
+        // Récupérer l'URI MongoDB actuelle depuis la variable globale
+        let mongo_uri = MONGO_URI.lock().unwrap().clone();
+        log_message(&log_state, format!("Initializing MongoDB connection with URI: {}", mongo_uri.split('@').next().unwrap_or(&mongo_uri)));
 
-        // Verify connection
-        client
-            .database("admin")
-            .run_command(doc! {"ping": 1}, None)
-            .await
-            .expect("Failed to ping MongoDB"); // Handle error better
+        let client_options = match ClientOptions::parse(&mongo_uri).await {
+            Ok(options) => options,
+            Err(e) => {
+                log_message(&log_state, format!("Failed to parse MongoDB URI: {}", e));
+                // Continuer avec l'URI par défaut si l'URI configurée est invalide
+                let default_uri = DEFAULT_MONGO_URI.to_string();
+                log_message(&log_state, format!("Falling back to default URI: {}", default_uri));
 
-        log_message(&log_state, "Connected to MongoDB successfully during init".to_string());
+                ClientOptions::parse(DEFAULT_MONGO_URI)
+                    .await
+                    .expect("Failed to parse default MongoDB URI")
+            }
+        };
+
+        let client = match Client::with_options(client_options) {
+            Ok(client) => client,
+            Err(e) => {
+                log_message(&log_state, format!("Failed to create MongoDB client: {}", e));
+                // Au lieu de planter, on crée un client avec une URI par défaut
+                // qui sera remplacée plus tard par la configuration utilisateur
+                log_message(&log_state, "Creating placeholder MongoDB client - connection will be established later".to_string());
+                Client::with_uri_str(DEFAULT_MONGO_URI)
+                    .await
+                    .expect("Failed to create placeholder MongoDB client")
+            }
+        };
+
+        // Essayer de ping MongoDB, mais ne pas planter si ça échoue
+        match client.database("admin").run_command(doc! {"ping": 1}, None).await {
+            Ok(_) => log_message(&log_state, "Connected to MongoDB successfully during init".to_string()),
+            Err(e) => {
+                log_message(&log_state, format!("Failed to ping MongoDB: {}", e));
+                log_message(&log_state, "Application will start and prompt for MongoDB configuration".to_string());
+                // Ne pas panic! ici - on laisse l'interface s'afficher
+            }
+        }
 
         let db = client.database(DB_NAME);
         let cloned_log_file = log_state.0.lock().unwrap().try_clone().expect("Failed to clone log file handle during init");
         let repo_log_state = LogState(Mutex::new(cloned_log_file));
+
+        // Création d'un repository MongoDB même si la connexion a échoué
+        // Les fonctions individuelles géreront les erreurs de connexion quand elles seront appelées
         let db_repo: Arc<dyn DbRepository> = Arc::new(MongoDbRepository { db, log_state: repo_log_state });
 
         AppState { db_repo, log_state }
@@ -510,13 +811,11 @@ fn main() {
 
 
     tauri::Builder::default()
-        .manage(app_state) // Manage the combined AppState
+        .manage(app_state)
         .invoke_handler(tauri::generate_handler![
-            // init_mongodb, // Removed, init happens above
-            init_command, // Keep or remove if setup is enough
+            init_command,
             save_package_collection,
             save_stage_to_mongodb,
-            // get_package_collections, // Removed
             get_package_collections_by_uri,
             get_current_username,
             get_all_package_collections,
@@ -524,32 +823,28 @@ fn main() {
             get_stages_by_uri,
             revert_stage,
             get_stage_history,
-            get_all_stage_names
+            get_all_stage_names,
+            open_tool_in_terminal,
+            open_rez_env_in_terminal,
+            test_mongodb_connection,
+            load_stage_by_id
         ])
         .setup(|_app| {
-            // Setup logic can remain if needed for other things,
-            // but DB init is now done before builder
             Ok(())
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
 
-// --- Unit Tests ---
 #[cfg(test)]
 mod tests {
     use super::*;
     use mockall::predicate::*;
-    // Keep import from super
     use super::MockDbRepository;
-    // use mongodb::Database; // No longer needed directly
     use rand::{distributions::Alphanumeric, Rng};
     use std::fs;
     use std::path::PathBuf;
     use std::collections::HashSet;
-
-    // --- Test Helpers ---
-    // Remove setup_test_db, TEST_MONGO_URI, TEST_DB_NAME
 
     fn generate_random_suffix(len: usize) -> String {
         rand::thread_rng()
@@ -559,7 +854,6 @@ mod tests {
             .collect()
     }
 
-    // Helper to create a dummy LogState for tests (can be simplified if logging isn't asserted)
     fn create_test_log_state() -> (LogState, PathBuf) {
         let unique_suffix = generate_random_suffix(8);
         let log_file_name = format!("test_log_{}.log", unique_suffix);
@@ -574,10 +868,7 @@ mod tests {
         (LogState(Mutex::new(log_file)), log_path)
     }
 
-
-    // Helper to create a dummy PackageCollection
     fn create_dummy_package_collection(version: &str, uri: &str) -> PackageCollection {
-        // ... (keep implementation as is)
         PackageCollection {
             version: version.to_string(),
             packages: vec!["pkg1".to_string(), "pkg2".to_string()],
@@ -588,25 +879,6 @@ mod tests {
             uri: uri.to_string(),
         }
     }
-
-    // Helper to create a dummy Stage
-    /*
-    fn create_dummy_stage(name: &str, uri: &str, version: &str, active: bool) -> Stage {
-         Stage {
-            id: Some(ObjectId::new()), // Give it an ID for tests involving IDs
-            name: name.to_string(),
-            uri: uri.to_string(),
-            from_version: version.to_string(),
-            rxt_path: format!("/path/to/{}.rxt", name),
-            tools: vec!["toolC".to_string(), "toolD".to_string()],
-            created_at: Utc::now().to_rfc3339(),
-            created_by: "test_user".to_string(),
-            active: active,
-        }
-    }
-    */
-
-    // --- Test Cases (Rewritten with Mocks) ---
 
     #[tokio::test]
     async fn test_get_package_collections_by_uri_found() {
@@ -621,14 +893,12 @@ mod tests {
             .times(1)
             .returning(move |_| Ok(expected_packages.clone()));
 
-        // Create AppState with the mock
         let (log_state, _log_path) = create_test_log_state();
         let app_state = AppState {
             db_repo: Arc::new(mock_repo),
             log_state,
         };
 
-        // Call the repository method directly via the AppState
         let result = app_state.db_repo.find_package_collections_by_uri(uri1).await;
 
         assert!(result.is_ok());
@@ -637,7 +907,6 @@ mod tests {
         assert!(collections.contains(&pkg1));
         assert!(collections.contains(&pkg2));
 
-        // Clean up log file
         let _ = fs::remove_file(_log_path);
     }
 
@@ -658,14 +927,12 @@ mod tests {
             log_state,
         };
 
-        // Call the repository method directly
         let result = app_state.db_repo.find_package_collections_by_uri(non_existent_uri).await;
 
         assert!(result.is_ok());
         let collections = result.unwrap();
         assert!(collections.is_empty());
 
-        // Clean up log file
         let _ = fs::remove_file(_log_path);
     }
 
@@ -686,13 +953,11 @@ mod tests {
              log_state,
          };
 
-         // Call the repository method directly
          let result = app_state.db_repo.find_package_collections_by_uri(uri).await;
 
          assert!(result.is_err());
          assert_eq!(result.err().unwrap(), "Database connection failed");
 
-         // Clean up log file
          let _ = fs::remove_file(_log_path);
      }
 
@@ -717,7 +982,6 @@ mod tests {
             log_state,
         };
 
-        // Call the repository method directly
         let result = app_state.db_repo.find_all_package_collections().await;
 
         assert!(result.is_ok());
@@ -727,7 +991,6 @@ mod tests {
         assert!(collections.contains(&pkg2));
         assert!(collections.contains(&pkg3));
 
-        // Clean up log file
         let _ = fs::remove_file(_log_path);
     }
 
@@ -746,30 +1009,26 @@ mod tests {
              log_state,
          };
 
-         // Call the repository method directly
          let result = app_state.db_repo.find_all_package_collections().await;
 
          assert!(result.is_ok());
          let collections = result.unwrap();
          assert!(collections.is_empty());
 
-         // Clean up log file
          let _ = fs::remove_file(_log_path);
     }
 
-    // Test logging by calling a function that uses the repo and logs
     #[tokio::test]
     async fn test_logging_writes_to_file_via_repo_call() {
         let uri = "test/uri/log";
         let pkg_to_save = create_dummy_package_collection("log_pkg", uri);
-        // Remove unused clone: let pkg_clone = pkg_to_save.clone();
 
         let (log_state, log_path) = create_test_log_state();
-        let log_path_clone = log_path.clone(); // Clone for cleanup
+        let log_path_clone = log_path.clone();
 
         let mut mock_repo = MockDbRepository::new();
         mock_repo.expect_insert_package_collection()
-            .with(eq(pkg_to_save.clone())) // Ensure correct data is passed
+            .with(eq(pkg_to_save.clone()))
             .times(1)
             .returning(|_| Ok(()));
 
@@ -778,32 +1037,9 @@ mod tests {
             log_state,
         };
 
-        // Call the command function which contains the logging
-        // We still need to simulate the State for the command function itself
-        // Let's rethink this - maybe test log_message directly?
-        // Or keep calling the command but handle State creation differently?
-
-        // Alternative: Test the logging within the repository implementation itself?
-        // No, the logging happens in the command *after* the repo call.
-
-        // Let's try calling the command but creating a dummy State.
-        // This requires careful handling of lifetimes, might not be straightforward.
-
-        // Simplest approach for now: Assume log_message works and test repo interaction.
-        // If logging *must* be tested via commands, more complex test setup is needed.
-
-        // Let's call the repo method directly and skip testing the command's logging for now.
         let result = app_state.db_repo.insert_package_collection(pkg_to_save).await;
         assert!(result.is_ok());
 
-        // We can't easily assert the log message written by the *command* here.
-        // To test command logging, we'd need to mock `log_message` or inspect the file
-        // after calling the command (which requires mocking State).
-
-        // For now, this test verifies the repo interaction.
-        // We'll remove the log file check part.
-
-        // Clean up
         let _ = fs::remove_file(log_path_clone);
     }
 
@@ -824,7 +1060,6 @@ mod tests {
             log_state,
         };
 
-        // Call the repository method directly
         let result = app_state.db_repo.find_distinct_stage_names().await;
 
         assert!(result.is_ok(), "find_distinct_stage_names failed: {:?}", result.err());
@@ -836,7 +1071,6 @@ mod tests {
         assert_eq!(actual_set.len(), 3, "Incorrect number of unique names returned");
         assert_eq!(actual_set, expected_set, "Returned names do not match expected unique names");
 
-        // Clean up log file
         let _ = fs::remove_file(_log_path);
     }
 
@@ -856,17 +1090,12 @@ mod tests {
             log_state,
         };
 
-        // Call the repository method directly
         let result = app_state.db_repo.find_distinct_stage_names().await;
 
         assert!(result.is_ok(), "find_distinct_stage_names failed: {:?}", result.err());
         let names = result.unwrap();
         assert!(names.is_empty(), "Expected empty vector for empty database, got: {:?}", names);
 
-        // Clean up log file
         let _ = fs::remove_file(_log_path);
     }
-
-    // ... Add more tests for other repository interactions ...
-
 }

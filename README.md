@@ -1,124 +1,126 @@
-# rezLauncher
+<div align="center">
+  <img src="src-tauri/icons/title.png" alt="RezLauncher Logo" width="400"/>
+  <br/>
+  <img src="src-tauri/icons/icon.png" alt="RezLauncher Icon" width="150"/>
+</div>
 
-A modern desktop application for managing Rez packages, stages, and tools in production pipelines. Built with Tauri, Svelte, and MongoDB.
+A modern desktop application to launch applications and manage environments within the Rez package ecosystem.
 
-## Overview
+## Table of Contents
 
-rezLauncher is a desktop application designed to streamline workflow management in production pipelines. It provides an intuitive interface for managing package collections, stages, and tools across different projects.
+- [Table of Contents](#table-of-contents)
+- [Introduction](#introduction)
+- [Key Features](#key-features)
+- [Technologies Used](#technologies-used)
+- [Installation](#installation)
+  - [For Developers](#for-developers)
+  - [Prerequisites](#prerequisites)
+  - [Steps](#steps)
+- [Usage](#usage)
+
+## Introduction
+
+RezLauncher is a desktop application designed to simplify the management and launching of software environments powered by the Rez package manager. It provides a user-friendly interface to configure, version, and deploy collections of software packages (stages) and their associated tools.
 
 ## Key Features
 
-- **Package Collection Management**: Create, view, and manage versioned package collections
-- **Stage Management**: Create stages from package collections and track their history
-- **Tool Loading**: Launch tools associated with package collections or stages
-- **URI-based Navigation**: Navigate through projects, modeling types, and applications with a hierarchical URI system
-- **User Modes**: Switch between Default and Developer modes with different feature sets
-- **Dark/Light Theme**: Toggle between dark and light themes for comfortable viewing in any environment
-- **Logging System**: Built-in logging to track operations and system status
+- **MongoDB Integration**: Connect to a MongoDB instance to store and retrieve package and stage configurations.
+- **Dynamic URI Navigation**: Organize and access configurations using a hierarchical URI structure (e.g., `/Project/ModelingType/Application`).
+- **Package Collection Management**:
+    - Create and version package collections.
+    - Define packages, inheritance, and associated tools for each collection.
+- **Stage Management**:
+    - "Bake" package collections into immutable stages.
+    - View stage history and details.
+    - Revert to previous stage versions.
+    - Activate/deactivate stages.
+- **Tool Launching**:
+    - Launch Rez environments for selected package collections or stages directly into a terminal.
+    - Launch individual tools associated with a collection or stage.
+- **Configuration Modes**:
+    - **Config Mode**: For setting up and managing package collections and baking stages.
+    - **Launcher Mode**: For browsing and launching existing stages and tools.
+- **User Interface**:
+    - Intuitive Svelte-based frontend.
+    - Light and Dark theme options.
+    - Real-time logging panel for monitoring application activity.
+- **Cross-Platform**: Built with Tauri for desktop compatibility.
 
-## Prerequisites
+## Technologies Used
 
-- [MongoDB](https://www.mongodb.com/try/download/community) (running on localhost:27017)
-- [Node.js](https://nodejs.org/) (v16 or higher)
-- [Rust](https://www.rust-lang.org/tools/install) (for Tauri backend)
+- **[Svelte](https://svelte.dev/)**: Frontend framework for the user interface.
+- **[Rust](https://www.rust-lang.org/)**: Backend language for core logic and Tauri integration.
+- **[Tauri](https://tauri.app/)**: Framework for building cross-platform desktop applications with web frontends.
+- **[MongoDB](https://www.mongodb.com/)**: Database for storing package and stage configurations.
 
 ## Installation
 
-1. Clone the repository:
-   ```
-   git clone <repository-url>
-   cd rezLauncher
-   ```
+For most users, the easiest way to install RezLauncher is to download the latest release from the [GitHub Releases page](https://github.com/ClementHector/RezLauncher/releases). Download the appropriate installer for your operating system (e.g., `.msi` for Windows, `.dmg` for macOS, or `.AppImage`/`.deb` for Linux), and run it.
 
-2. Install dependencies:
-   ```
-   npm install
-   ```
+### For Developers
 
-3. Ensure MongoDB is running:
-   ```
-   mongod --dbpath <your-data-path>
-   ```
+If you want to build the application from source or contribute to development, follow these steps:
 
-4. Build the application:
-   ```
-   npm run tauri build
-   ```
+### Prerequisites
 
-5. The built application will be available in the `src-tauri/target/release` directory.
+- **Node.js and npm**: For managing frontend dependencies and running scripts. (Download from [nodejs.org](https://nodejs.org/))
+- **Rust and Cargo**: For building the backend. (Install via [rustup.rs](https://rustup.rs/))
+- **MongoDB**: (Optional, can be configured in-app) A running MongoDB instance if you want to persist configurations.
 
-## Development
+### Steps
 
-For development, you can run the application in development mode:
-
-```
-npm run tauri dev
-```
-
-This will start the Svelte dev server and launch the Tauri application window.
-
-## Project Structure
-
-- `src/`: Svelte frontend application
-  - `lib/`: Components and type definitions
-  - `routes/`: Svelte routes
-- `src-tauri/`: Rust backend and Tauri configuration
-  - `src/`: Rust source code
-  - `icons/`: Application icons
-
-## Data Models
-
-### Package Collection
-
-A collection of packages with associated tools and version information:
-- Version
-- Packages list
-- Tools list
-- URI path
-- Creation metadata
-
-### Stage
-
-A snapshot of a package collection at a specific point:
-- Name
-- URI
-- From version
-- Rez template path
-- Tools list
-- Active status
-
-## Configuration
-
-The MongoDB connection is configured in `src-tauri/src/main.rs`. By default, it connects to:
-- MongoDB URI: `mongodb://localhost:27017`
-- Database name: `rez_launcher`
-
-## Backend Testing (Rust)
-
-Unit tests for the Rust backend (Tauri core process) are located within the `src-tauri/src/main.rs` file, inside the `#[cfg(test)] mod tests` module.
-
-To run the tests:
-
-1.  **Ensure a MongoDB instance is running locally** on the default port (27017). The tests require a running MongoDB server to connect to the test database.
-2.  Navigate to the `src-tauri` directory in your terminal:
+1.  **Clone the repository:**
     ```bash
-    cd src-tauri
-    ```
-3.  Run the tests using Cargo:
-    ```bash
-    cargo test
+    git clone https://github.com/ClementHector/RezLauncher.git
+    cd RezLauncher
     ```
 
-The tests will connect to MongoDB, create a temporary test database (`rez_launcher_test_db`), run the test cases, and then drop the test database.
+2.  **Install frontend dependencies:**
+    ```bash
+    npm install
+    ```
 
-## License
+3.  **Build and run the application:**
 
-<!-- TODO -->
+    *   For development (with hot-reloading):
+        ```bash
+        npm run tauri dev
+        ```
+    *   For a production build:
+        ```bash
+        npm run tauri build
+        ```
+        The executable will be located in `src-tauri/target/release/`.
 
-## Credits
+## Usage
 
-Built with:
-- [Tauri](https://tauri.app/) - Desktop application framework
-- [Svelte](https://svelte.dev/) - Frontend framework
-- [MongoDB](https://www.mongodb.com/) - Database
-- [Rust](https://www.rust-lang.org/) - Backend language
+1.  **Initial Setup**:
+    *   On the first launch, if a MongoDB connection URI is not found in your settings, a configuration modal will appear.
+    *   Enter your MongoDB connection string (e.g., `mongodb://localhost:27017`) and test the connection. The application will store this URI for future sessions.
+
+2.  **Navigating Layers**:
+    *   Use the "LAYERS" breadcrumb navigation at the top to define your working context.
+    *   Select or add new options for Project, Modeling Type, and Application. This creates a URI path (e.g., `/MyProject/Character/Maya`) that filters the displayed package collections and stages.
+
+3.  **Modes**:
+    *   **Config Mode**:
+        *   **Package Collections Panel**:
+            *   Click "Create New" to define a new package collection for the current URI. Specify version, packages (e.g., `maya-2023`, `houdini-19.5`), inheritance, and tools.
+            *   Click the "Bake" icon on a package collection to create a "Stage" from it. This typically involves generating an RXT file and saving it as a new, active stage.
+            *   Click the "Edit" icon to create a new package collection based on an existing one.
+        *   **Stages Panel**:
+            *   View stages created for the current URI.
+            *   Click the "Revert" icon to make an older version of a stage active.
+    *   **Launcher Mode** (and generally available actions):
+        *   **Package Collections / Stages Panels**:
+            *   Click on a package collection or a stage to select it. This will populate the "Tools" panel.
+            *   Click the "Load" (play) icon to open a Rez environment for the selected item in a new terminal.
+        *   **Tools Panel**:
+            *   View tools associated with the selected package collection or stage.
+            *   Click the "Load" (play) icon next to a tool to launch that specific tool within the context of its parent collection/stage in a new terminal.
+
+4.  **Interface**:
+    *   **Home Button**: Resets the URI path to the root.
+    *   **Refresh Button**: Reloads package collections and stages for the current URI.
+    *   **Theme Toggle**: Switch between Light and Dark themes.
+    *   **Logs Panel**: View real-time logs of application actions, successes, warnings, and errors at the bottom of the window.

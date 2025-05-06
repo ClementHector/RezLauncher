@@ -3,12 +3,12 @@
   import SectionPanel from "$lib/components/SectionPanel.svelte";
   import PackageModal from "$lib/components/PackageModal.svelte";
   import RevertModal from "$lib/components/RevertModal.svelte";
+  import MongoDBConfigModal from "$lib/components/MongoDBConfigModal.svelte";
+  import { getCookie, setCookie } from "$lib/utils/cookies";
 
-  // State management
-  let mode = $state("Developer");
+  let mode = $state("Launcher");
   let theme = $state("Light");
 
-  // Define type for log entries
   type LogEntry = {
     message: string;
     type: "info" | "success" | "warning" | "error";
@@ -17,18 +17,20 @@
 
   let logs = $state<LogEntry[]>([]);
   let packageModalOpen = $state(false);
-  let revertModalOpen = $state(false); // New state for revert modal
+  let revertModalOpen = $state(false);
+  let mongodbConfigModalOpen = $state(false);
+  let mongodbErrorMessage = $state("");
   let isEditingPackage = $state(false);
   let currentPackageData = $state<PackageCollection | null>(null);
-  let currentStageName = $state(""); // New state for storing current stage name
-  let currentStageUri = $state(""); // New state for storing current stage URI
+  let currentStageName = $state("");
+  let currentStageUri = $state("");
   let currentUsername = $state("");
   let packageCollections = $state<PackageCollection[]>([]);
   let packageCollectionMessage = $state("");
   let stageMessage = $state("");
   let allUris = $state<string[]>([]);
+  let isAppLoading = $state(true);
 
-  // Define types for our data structures
   type Package = {
     version: string;
     baked: boolean;
@@ -45,7 +47,6 @@
     [key: string]: any;
   };
 
-  // Navigation state
   let currentUri = $state("");
   let projectSelection = $state("select");
   let modelingSelection = $state("select");
@@ -54,14 +55,11 @@
   let showModelingCombobox = $state(false);
   let showApplicationCombobox = $state(false);
 
-  // Add option state
   let isAddingProjectOption = $state(false);
   let isAddingModelingOption = $state(false);
   let isAddingApplicationOption = $state(false);
   let newOptionText = $state("");
 
-  // Content data
-  // Define Stage type
   type Stage = {
     name: string;
     loaded?: boolean;
@@ -76,19 +74,16 @@
   let activePackage = $state<string | null>(null);
   let activeStage = $state<string | null>(null);
   let packages = $state<Package[]>([]);
-  // Define the Tool type to accurately represent tools array elements
   type Tool = string | { name: string; loaded?: boolean; [key: string]: any };
   let tools = $state<Tool[]>([]);
   let applicationDropdownOpen = $state(false);
 
-  // Other variables
   let projectDropdownOpen = $state(false);
   let modelingDropdownOpen = $state(false);
   let projectOptions = $state<string[]>(["select"]);
   let modelingOptions = $state<string[]>(["select"]);
   let applicationOptions = $state<string[]>(["select"]);
 
-  // Build URI based on current selections
   function buildCurrentUri() {
     if (projectSelection === "select") return "";
 
@@ -101,7 +96,6 @@
     }
   }
 
-  // Dropdown management
   function toggleDropdown(dropdownName: string) {
     projectDropdownOpen = dropdownName === 'project' ? !projectDropdownOpen : false;
     modelingDropdownOpen = dropdownName === 'modeling' ? !modelingDropdownOpen : false;
@@ -131,10 +125,9 @@
     }
     addLog(`Selected ${dropdownName}: ${option}`);
 
-    // Reset active selections and tools BEFORE fetching new data
     activeStage = null;
     activePackage = null;
-    tools = []; // Clear tools
+    tools = [];
 
     fetchPackageCollectionsByUri();
     fetchStagesByUri();
@@ -204,7 +197,6 @@
     newOptionText = "";
   }
 
-  // UI Actions
   function toggleDarkMode() {
     theme = theme === "Light" ? "Dark" : "Light";
   }
@@ -286,7 +278,6 @@
     }
   }
 
-  // Button actions
   async function loadStage(stageName: string) {
     try {
       addLog(`Loading stage: ${stageName}`);
@@ -295,6 +286,43 @@
           ? { ...stage, loaded: true }
           : { ...stage, loaded: false }
       );
+
+      // Get the selected stage
+      const selectedStage = stages.find(stage => stage.name === stageName);
+      if (selectedStage && selectedStage.id) {
+        addLog(`Opening rez environment for stage "${stageName}" using RXT file`, "info");
+
+        // Extract the MongoDB ObjectId string correctly
+        // Handle different possible formats of the ObjectId
+        let stageIdString;
+
+        if (typeof selectedStage.id === 'string') {
+          // If already a string, use it directly
+          stageIdString = selectedStage.id;
+        } else if (selectedStage.id.$oid) {
+          // MongoDB ObjectId in JSON format: { $oid: "hexstring" }
+          stageIdString = selectedStage.id.$oid;
+        } else if (selectedStage.id.toString && typeof selectedStage.id.toString === 'function' &&
+                  selectedStage.id.toString() !== '[object Object]') {
+          // If it has a custom toString method (MongoDB ObjectId object)
+          stageIdString = selectedStage.id.toString();
+        } else {
+          // Add debugging information
+          addLog(`Stage ID has unexpected format: ${JSON.stringify(selectedStage.id)}`, "warning");
+          throw new Error(`Cannot extract valid ID from stage object: ${JSON.stringify(selectedStage.id)}`);
+        }
+
+        addLog(`Using stage ID: ${stageIdString}`, "info");
+
+        // Call the Rust function to load the stage using its RXT content
+        await invoke("load_stage_by_id", {
+          stageId: stageIdString
+        });
+
+        addLog(`Rez environment loaded for stage: ${stageName}`, "success");
+      } else {
+        addLog(`Stage "${stageName}" not found or has no ID`, "error");
+      }
     } catch (error) {
       addLog(`Error loading stage: ${error}`, "error");
     }
@@ -328,7 +356,6 @@
 
     if (success) {
       addLog(`Successfully reverted stage: ${stageName}`, "success");
-      // Refresh stages to show the newly active stage
       await fetchStagesByUri();
     } else {
       addLog(`Failed to revert stage: ${event.detail.error}`, "error");
@@ -367,15 +394,82 @@
   async function loadTool(toolName: string) {
     try {
       addLog(`Loading tool: ${toolName}`);
+
       tools = tools.map(tool => {
-        // Handle both string tools and object tools
         const name = typeof tool === 'string' ? tool : tool.name;
         return name === toolName
           ? typeof tool === 'string' ? { name: tool, loaded: true } : { ...tool, loaded: true }
           : typeof tool === 'string' ? tool : { ...tool, loaded: false };
       });
+
+      if (toolName && !toolName.includes("No tools")) {
+        addLog(`Launching tool in terminal: ${toolName}`, "info");
+
+        // Récupérer la liste des packages en fonction de la sélection actuelle
+        let packages: string[] = [];
+
+        if (activeStage) {
+          // Si un stage est sélectionné, récupérer ses packages
+          const selectedStage = stages.find(stage => stage.name === activeStage);
+          if (selectedStage && selectedStage.from_version) {
+            // Trouver le package collection correspondant au from_version du stage
+            const stagePackage = packageCollections.find(pkg => pkg.version === selectedStage.from_version);
+            if (stagePackage && stagePackage.packages && Array.isArray(stagePackage.packages)) {
+              packages = stagePackage.packages;
+              addLog(`Using ${packages.length} packages from stage "${activeStage}"`, "info");
+            } else {
+              addLog(`No packages found for stage "${activeStage}", using empty package list`, "warning");
+            }
+          }
+        } else if (activePackage) {
+          // Si un package collection est sélectionné, récupérer ses packages
+          const selectedPackage = packageCollections.find(pkg => pkg.version === activePackage);
+          if (selectedPackage && selectedPackage.packages && Array.isArray(selectedPackage.packages)) {
+            packages = selectedPackage.packages;
+            addLog(`Using ${packages.length} packages from package collection "${activePackage}"`, "info");
+          } else {
+            addLog(`No packages found for package collection "${activePackage}", using empty package list`, "warning");
+          }
+        }
+
+        // Appeler la fonction Tauri en passant la liste des packages
+        await invoke("open_tool_in_terminal", {
+          toolName: toolName,
+          packages: packages
+        });
+
+        addLog(`Tool ${toolName} launched successfully in terminal with ${packages.length} packages`, "success");
+      }
     } catch (error) {
       addLog(`Error loading tool: ${error}`, "error");
+    }
+  }
+
+  async function loadPackage(packageVersion: string) {
+    try {
+      addLog(`Loading package collection: ${packageVersion}`);
+      packages = packages.map(pkg =>
+        pkg.version === packageVersion
+          ? { ...pkg, loaded: true }
+          : { ...pkg, loaded: false }
+      );
+
+      // Récupérer les packages pour la collection sélectionnée
+      const selectedPackage = packageCollections.find(pkg => pkg.version === packageVersion);
+      if (selectedPackage && selectedPackage.packages && Array.isArray(selectedPackage.packages)) {
+        addLog(`Opening rez environment with ${selectedPackage.packages.length} packages from package collection "${packageVersion}"`, "info");
+
+        // Appeler la fonction Rust pour ouvrir un terminal avec ces packages
+        await invoke("open_rez_env_in_terminal", {
+          packages: selectedPackage.packages
+        });
+
+        addLog(`Rez environment loaded for package collection: ${packageVersion}`, "success");
+      } else {
+        addLog(`No packages found for package collection "${packageVersion}", cannot load rez environment`, "warning");
+      }
+    } catch (error) {
+      addLog(`Error loading package collection: ${error}`, "error");
     }
   }
 
@@ -448,7 +542,6 @@
     fetchStagesByUri();
   }
 
-  // Data fetching functions
   async function fetchCurrentUsername() {
     try {
       const username = await invoke("get_current_username");
@@ -476,9 +569,9 @@
           packageCollections = result.collections;
           packages = packageCollections.map(collection => ({
             version: collection.version,
-            baked: false, // Assuming baked is not the active state indicator
+            baked: false,
             uri: collection.uri,
-            active: false // Ensure active is false
+            active: false
           }));
           packageCollectionMessage = "";
           addLog(`Found ${packageCollections.length} package collections for ${currentUri}`, "success");
@@ -491,17 +584,16 @@
       } else {
         addLog(`Error fetching package collections: ${result.message}`, "error");
         packageCollectionMessage = `Error: ${result.message}`;
-        packageCollections = []; // Clear on error
-        packages = []; // Clear on error
+        packageCollections = [];
+        packages = [];
       }
-      // Reset activePackage state variable
       activePackage = null;
     } catch (error) {
       addLog(`Error fetching package collections: ${error}`, "error");
       packageCollectionMessage = `Error: ${error}`;
-      packageCollections = []; // Clear on error
-      packages = []; // Clear on error
-      activePackage = null; // Reset on error too
+      packageCollections = [];
+      packages = [];
+      activePackage = null;
     }
   }
 
@@ -551,13 +643,14 @@
 
       if (Array.isArray(stagesData) && stagesData.length > 0) {
         stages = stagesData.map(stage => ({
+          id: stage._id, // Ajout de l'ID du stage
           name: stage.name,
           loaded: false,
           uri: stage.uri,
           from_version: stage.from_version,
           rxt_path: stage.rxt_path,
           tools: stage.tools,
-          active: false // Ensure active is false
+          active: false
         }));
         stageMessage = "";
         addLog(`Found ${stages.length} stages for ${currentUri}`, "success");
@@ -566,13 +659,12 @@
         stageMessage = `No ${showActiveOnly ? 'active ' : ''}stages found for ${currentUri}`;
         addLog(`No ${showActiveOnly ? 'active ' : ''}stages found for ${currentUri}`, "warning");
       }
-      // Reset activeStage state variable
       activeStage = null;
     } catch (error) {
       addLog(`Error fetching stages: ${error}`, "error");
       stages = [];
       stageMessage = `Error: ${error}`;
-      activeStage = null; // Reset on error too
+      activeStage = null;
     }
   }
 
@@ -595,13 +687,69 @@
     await fetchStagesByUri();
   }
 
-  // Initialize the application
   async function initApp() {
-    await fetchCurrentUsername();
-    await fetchAllUrisAndUpdateOptions();
-    await fetchPackageCollectionsByUri();
-    await fetchStagesByUri();
-    addLog("RezLauncher started");
+    try {
+      // Vérifier d'abord si l'URI MongoDB est présente dans les cookies
+      const savedURI = await getCookie("mongoURI");
+
+      if (!savedURI) {
+        // Si pas d'URI, afficher la modale immédiatement avant toute connexion
+        addLog("No MongoDB URI found in cookies, showing configuration page", "warning");
+        showMongoDBConfigModal();
+        return; // Arrêter l'initialisation jusqu'à ce que l'utilisateur configure MongoDB
+      }
+
+      // Pour gérer les erreurs de connexion sans bloquer l'interface
+      try {
+        addLog("Testing MongoDB connection with saved URI...");
+        const result = await invoke("test_mongodb_connection", { mongoUri: savedURI });
+
+        if (!result) {
+          mongodbErrorMessage = "Could not connect to MongoDB with saved URI";
+          addLog(`MongoDB connection failed: ${mongodbErrorMessage}`, "error");
+          showMongoDBConfigModal();
+          return; // Arrêter l'initialisation jusqu'à ce que l'utilisateur reconfigure MongoDB
+        }
+
+        addLog("MongoDB connection successful", "success");
+
+        // Continuer l'initialisation seulement si la connexion MongoDB est réussie
+        await fetchCurrentUsername();
+        await fetchAllUrisAndUpdateOptions();
+        await fetchPackageCollectionsByUri();
+        await fetchStagesByUri();
+        addLog("RezLauncher started");
+      } catch (error) {
+        mongodbErrorMessage = `${error}`;
+        addLog(`MongoDB connection error: ${error}`, "error");
+        showMongoDBConfigModal();
+      }
+    } catch (error) {
+      // Erreur générale d'initialisation non liée à MongoDB
+      addLog(`Error initializing app: ${error}`, "error");
+      // Toujours montrer la modale de configuration en cas d'erreur
+      mongodbErrorMessage = `Initialization error: ${error}`;
+      showMongoDBConfigModal();
+    }
+  }
+
+  function showMongoDBConfigModal() {
+    mongodbConfigModalOpen = true;
+  }
+
+  function closeMongoDBConfigModal() {
+    mongodbConfigModalOpen = false;
+    mongodbErrorMessage = "";
+  }
+
+  async function handleMongoDBConfigSuccess(event: CustomEvent) {
+    const { mongoURI } = event.detail;
+    addLog(`MongoDB configured successfully with URI: ${mongoURI.split('@').pop()}`, "success");
+    mongodbConfigModalOpen = false;
+    mongodbErrorMessage = "";
+
+    // Restart application initialization
+    await initApp();
   }
 
   initApp();
@@ -615,12 +763,12 @@
     <div class="mode-selection">
       <span>Mode:</span>
       <label>
-        <input type="radio" bind:group={mode} value="Default">
-        Default
+        <input type="radio" bind:group={mode} value="Launcher">
+        Launcher
       </label>
       <label>
-        <input type="radio" bind:group={mode} value="Developer">
-        Developer
+        <input type="radio" bind:group={mode} value="Config">
+        Config
       </label>
       <label class="theme-toggle">
         <input type="checkbox" checked={theme === "Dark"} onchange={toggleDarkMode}>
@@ -630,7 +778,7 @@
   </header>
 
   <nav class="breadcrumb">
-    <span class="uri-label">URI:</span>
+    <span class="uri-label">LAYERS:</span>
 
     {#if isAddingProjectOption}
       <div class="add-option-form">
@@ -794,6 +942,24 @@
 
   <div class="content-area">
     <div class="left-panel">
+      {#if mode === "Config"}
+        <SectionPanel
+          title="Package Collections"
+          items={packages}
+          expandable={true}
+          showCreateNew={true}
+          hasBakeEdit={true}
+          mode={mode}
+          emptyMessage={packageCollectionMessage}
+          onLoad={loadPackage}
+          onBake={bakePackage}
+          onEdit={createFromPackage}
+          onCreate={createNewPackage}
+          onClick={handlePackageClick}
+          on:bake-complete={handleBakeComplete}
+        />
+      {/if}
+
       <SectionPanel
         title="Stages"
         items={stages}
@@ -805,24 +971,6 @@
         onClick={handleStageClick}
         onRefresh={refreshStages}
       />
-
-      {#if mode === "Developer"}
-        <SectionPanel
-          title="Package Collections"
-          items={packages}
-          expandable={true}
-          showCreateNew={true}
-          hasBakeEdit={true}
-          mode={mode}
-          emptyMessage={packageCollectionMessage}
-          onLoad={() => {}}
-          onBake={bakePackage}
-          onEdit={createFromPackage}
-          onCreate={createNewPackage}
-          onClick={handlePackageClick}
-          on:bake-complete={handleBakeComplete}
-        />
-      {/if}
     </div>
 
     <div class="right-panel">
@@ -851,6 +999,13 @@
     stageUri={currentStageUri}
     on:close={closeRevertModal}
     on:revert-complete={handleRevertComplete}
+  />
+
+  <MongoDBConfigModal
+    isOpen={mongodbConfigModalOpen}
+    errorMessage={mongodbErrorMessage}
+    on:close={closeMongoDBConfigModal}
+    on:config-success={handleMongoDBConfigSuccess}
   />
 
   <footer>
