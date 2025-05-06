@@ -1,15 +1,13 @@
-name: Build Tauri App
+name: Build Application
 
 on:
   workflow_run:
     workflows: ["Test"]
     types:
       - completed
+  push:
     branches:
       - main
-  push:
-    tags:
-      - 'v*'
 
 permissions:
   contents: write
