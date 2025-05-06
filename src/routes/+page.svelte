@@ -3,6 +3,8 @@
   import SectionPanel from "$lib/components/SectionPanel.svelte";
   import PackageModal from "$lib/components/PackageModal.svelte";
   import RevertModal from "$lib/components/RevertModal.svelte";
+  import MongoDBConfigModal from "$lib/components/MongoDBConfigModal.svelte";
+  import { getCookie, setCookie } from "$lib/utils/cookies";
 
   let mode = $state("Config");
   let theme = $state("Light");
@@ -16,6 +18,8 @@
   let logs = $state<LogEntry[]>([]);
   let packageModalOpen = $state(false);
   let revertModalOpen = $state(false);
+  let mongodbConfigModalOpen = $state(false);
+  let mongodbErrorMessage = $state("");
   let isEditingPackage = $state(false);
   let currentPackageData = $state<PackageCollection | null>(null);
   let currentStageName = $state("");
@@ -25,6 +29,7 @@
   let packageCollectionMessage = $state("");
   let stageMessage = $state("");
   let allUris = $state<string[]>([]);
+  let isAppLoading = $state(true);
 
   type Package = {
     version: string;
@@ -281,7 +286,7 @@
           ? { ...stage, loaded: true }
           : { ...stage, loaded: false }
       );
-      
+
       // Récupérer les packages pour le stage sélectionné
       const selectedStage = stages.find(stage => stage.name === stageName);
       if (selectedStage && selectedStage.from_version) {
@@ -289,12 +294,12 @@
         const stagePackage = packageCollections.find(pkg => pkg.version === selectedStage.from_version);
         if (stagePackage && stagePackage.packages && Array.isArray(stagePackage.packages)) {
           addLog(`Opening rez environment with ${stagePackage.packages.length} packages from stage "${stageName}"`, "info");
-          
+
           // Appeler la fonction Rust pour ouvrir un terminal avec ces packages
           await invoke("open_rez_env_in_terminal", {
             packages: stagePackage.packages
           });
-          
+
           addLog(`Rez environment loaded for stage: ${stageName}`, "success");
         } else {
           addLog(`No packages found for stage "${stageName}", cannot load rez environment`, "warning");
@@ -432,17 +437,17 @@
           ? { ...pkg, loaded: true }
           : { ...pkg, loaded: false }
       );
-      
+
       // Récupérer les packages pour la collection sélectionnée
       const selectedPackage = packageCollections.find(pkg => pkg.version === packageVersion);
       if (selectedPackage && selectedPackage.packages && Array.isArray(selectedPackage.packages)) {
         addLog(`Opening rez environment with ${selectedPackage.packages.length} packages from package collection "${packageVersion}"`, "info");
-        
+
         // Appeler la fonction Rust pour ouvrir un terminal avec ces packages
         await invoke("open_rez_env_in_terminal", {
           packages: selectedPackage.packages
         });
-        
+
         addLog(`Rez environment loaded for package collection: ${packageVersion}`, "success");
       } else {
         addLog(`No packages found for package collection "${packageVersion}", cannot load rez environment`, "warning");
@@ -666,11 +671,68 @@
   }
 
   async function initApp() {
-    await fetchCurrentUsername();
-    await fetchAllUrisAndUpdateOptions();
-    await fetchPackageCollectionsByUri();
-    await fetchStagesByUri();
-    addLog("RezLauncher started");
+    try {
+      // Vérifier d'abord si l'URI MongoDB est présente dans les cookies
+      const savedURI = await getCookie("mongoURI");
+
+      if (!savedURI) {
+        // Si pas d'URI, afficher la modale immédiatement avant toute connexion
+        addLog("No MongoDB URI found in cookies, showing configuration page", "warning");
+        showMongoDBConfigModal();
+        return; // Arrêter l'initialisation jusqu'à ce que l'utilisateur configure MongoDB
+      }
+
+      // Pour gérer les erreurs de connexion sans bloquer l'interface
+      try {
+        addLog("Testing MongoDB connection with saved URI...");
+        const result = await invoke("test_mongodb_connection", { mongoUri: savedURI });
+
+        if (!result) {
+          mongodbErrorMessage = "Could not connect to MongoDB with saved URI";
+          addLog(`MongoDB connection failed: ${mongodbErrorMessage}`, "error");
+          showMongoDBConfigModal();
+          return; // Arrêter l'initialisation jusqu'à ce que l'utilisateur reconfigure MongoDB
+        }
+
+        addLog("MongoDB connection successful", "success");
+
+        // Continuer l'initialisation seulement si la connexion MongoDB est réussie
+        await fetchCurrentUsername();
+        await fetchAllUrisAndUpdateOptions();
+        await fetchPackageCollectionsByUri();
+        await fetchStagesByUri();
+        addLog("RezLauncher started");
+      } catch (error) {
+        mongodbErrorMessage = `${error}`;
+        addLog(`MongoDB connection error: ${error}`, "error");
+        showMongoDBConfigModal();
+      }
+    } catch (error) {
+      // Erreur générale d'initialisation non liée à MongoDB
+      addLog(`Error initializing app: ${error}`, "error");
+      // Toujours montrer la modale de configuration en cas d'erreur
+      mongodbErrorMessage = `Initialization error: ${error}`;
+      showMongoDBConfigModal();
+    }
+  }
+
+  function showMongoDBConfigModal() {
+    mongodbConfigModalOpen = true;
+  }
+
+  function closeMongoDBConfigModal() {
+    mongodbConfigModalOpen = false;
+    mongodbErrorMessage = "";
+  }
+
+  async function handleMongoDBConfigSuccess(event: CustomEvent) {
+    const { mongoURI } = event.detail;
+    addLog(`MongoDB configured successfully with URI: ${mongoURI.split('@').pop()}`, "success");
+    mongodbConfigModalOpen = false;
+    mongodbErrorMessage = "";
+
+    // Restart application initialization
+    await initApp();
   }
 
   initApp();
@@ -880,7 +942,7 @@
           on:bake-complete={handleBakeComplete}
         />
       {/if}
-      
+
       <SectionPanel
         title="Stages"
         items={stages}
@@ -920,6 +982,13 @@
     stageUri={currentStageUri}
     on:close={closeRevertModal}
     on:revert-complete={handleRevertComplete}
+  />
+
+  <MongoDBConfigModal
+    isOpen={mongodbConfigModalOpen}
+    errorMessage={mongodbErrorMessage}
+    on:close={closeMongoDBConfigModal}
+    on:config-success={handleMongoDBConfigSuccess}
   />
 
   <footer>

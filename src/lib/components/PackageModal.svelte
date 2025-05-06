@@ -256,7 +256,7 @@
         </div>
 
         <div class="form-group">
-          <label>Environment Variables:</label>
+          <label for="env-var-key">Environment Variables:</label>
           <div class="env-vars-container">
             {#if formData.environment_variables.length > 0}
               <div class="env-vars-list">
@@ -277,12 +277,14 @@
             <div class="env-var-input-row">
               <input
                 type="text"
+                id="env-var-key"
                 placeholder="Key"
                 bind:value={currentEnvKey}
               />
               <span class="env-var-equals">=</span>
               <input
                 type="text"
+                id="env-var-value"
                 placeholder="Value"
                 bind:value={currentEnvValue}
               />
