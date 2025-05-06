@@ -863,17 +863,19 @@
 
   <div class="content-area">
     <div class="left-panel">
-      <SectionPanel
-        title="Stages"
-        items={stages}
-        expandable={true}
-        mode={mode}
-        emptyMessage={stageMessage}
-        onLoad={loadStage}
-        onRevert={revertStage}
-        onClick={handleStageClick}
-        onRefresh={refreshStages}
-      />
+      {#if mode === "Launcher"}
+        <SectionPanel
+          title="Stages"
+          items={stages}
+          expandable={true}
+          mode={mode}
+          emptyMessage={stageMessage}
+          onLoad={loadStage}
+          onRevert={revertStage}
+          onClick={handleStageClick}
+          onRefresh={refreshStages}
+        />
+      {/if}
 
       {#if mode === "Config"}
         <SectionPanel

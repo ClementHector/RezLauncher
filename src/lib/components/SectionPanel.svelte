@@ -108,7 +108,7 @@
 </script>
 
 <div class="section-panel">
-  <div class="panel-header" class:tools-header={isTools}>
+  <div class="panel-header" class:tools-header={isTools} class:package-header={title === "Package Collections"}>
     <div class="title-container">
       {#if expandable}
         <span
@@ -287,6 +287,10 @@
 
   .tools-header {
     background-color: var(--accent-color);
+  }
+
+  .package-header {
+    background-color: rgb(255, 69, 69);
   }
 
   .title-container {
