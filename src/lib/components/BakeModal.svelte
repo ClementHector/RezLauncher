@@ -98,7 +98,7 @@
       name: bakeName,
       uri: packageCollectionUri,
       from_version: packageCollectionVersion,
-      rxt_path: '',
+      rxt: '', // Initialize with empty string, will be populated by the backend
       tools: packageTools,
       environment_variables: envVars,
       created_at: new Date().toISOString(),

@@ -6,14 +6,20 @@ use mongodb::bson::{doc, oid::ObjectId, Bson};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use chrono::Utc;
 use std::sync::{Arc, Mutex};
-use std::fs::{OpenOptions, File};
-use std::io::Write;
+use std::fs::{self, OpenOptions, File};
+use std::io::{Read, Write};
+use std::process::Command;
+use rand::Rng;
 use tauri::State;
 use futures::stream::StreamExt;
+use once_cell::sync::Lazy;
 
-// Configuration de MongoDB
-const MONGO_URI: &str = "mongodb://localhost:27017";
+// Configuration par défaut de MongoDB (utilisée si aucune configuration n'est fournie)
+const DEFAULT_MONGO_URI: &str = "mongodb://localhost:27017";
 const DB_NAME: &str = "rez_launcher";
+
+// Variable globale pour stocker l'URI MongoDB actuelle
+static MONGO_URI: Lazy<Mutex<String>> = Lazy::new(|| Mutex::new(DEFAULT_MONGO_URI.to_string()));
 
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
@@ -225,7 +231,7 @@ struct Stage {
     name: String,
     uri: String,
     from_version: String,
-    rxt_path: String,
+    rxt: String,
     tools: Vec<String>,
     created_at: String,
     created_by: String,
@@ -263,7 +269,7 @@ fn init_log_file() -> Result<File, String> {
     let temp_dir = std::env::temp_dir();
     let log_dir = temp_dir.join("rezlauncher_logs");
 
-    if !log_dir.exists() {
+    if (!log_dir.exists()) {
         std::fs::create_dir_all(&log_dir).map_err(|e| e.to_string())?;
     }
 
@@ -301,6 +307,43 @@ async fn save_stage_to_mongodb(
     stage_data: Stage,
     state: State<'_, AppState>,
 ) -> Result<bool, String> {
+    // First, find the source package collection to get the list of packages
+    let source_package = state.db_repo.find_package_collections_by_uri(&stage_data.uri)
+        .await?
+        .into_iter()
+        .find(|pkg| pkg.version == stage_data.from_version);
+
+    let packages = match source_package {
+        Some(pkg) => pkg.packages,
+        None => {
+            let error_msg = format!("Package collection {} not found for RXT generation", stage_data.from_version);
+            log_message(&state.log_state, error_msg.clone());
+            return Err(error_msg);
+        }
+    };
+
+    // Generate the RXT file content from the package list
+    log_message(
+        &state.log_state,
+        format!("Generating RXT file for stage '{}' with {} packages", stage_data.name, packages.len())
+    );
+
+    let rxt_content = match generate_rxt_file(&packages, &state.log_state).await {
+        Ok(content) => {
+            log_message(
+                &state.log_state,
+                format!("Successfully generated RXT file for stage '{}'", stage_data.name)
+            );
+            content
+        },
+        Err(e) => {
+            let error_msg = format!("Failed to generate RXT file: {}", e);
+            log_message(&state.log_state, error_msg.clone());
+            return Err(error_msg);
+        }
+    };
+
+    // Set all existing stages with the same name and URI to inactive
     state.db_repo.update_stages_active_status(&stage_data.name, &stage_data.uri, false).await?;
 
     log_message(
@@ -308,13 +351,16 @@ async fn save_stage_to_mongodb(
         format!("Set active=false for all existing stages with name '{}' via repository", stage_data.name)
     );
 
+    // Create the new stage with the RXT content and set it to active
     let mut stage_to_insert = stage_data.clone();
     stage_to_insert.active = true;
+    stage_to_insert.rxt = rxt_content;
+    
     state.db_repo.insert_stage(stage_to_insert).await?;
 
     log_message(
         &state.log_state,
-        format!("Stage '{}' saved via repository", stage_data.name)
+        format!("Stage '{}' saved via repository with RXT content", stage_data.name)
     );
 
     Ok(true)
@@ -502,7 +548,7 @@ async fn open_rez_env_in_terminal(packages: Vec<String>, state: State<'_, AppSta
         } else {
             "x-terminal-emulator"
         };
-        
+
         let mut cmd = std::process::Command::new(terminal_cmd);
         cmd.arg("-e").arg(format!("bash -c '{} && bash'", rez_command));
         cmd
@@ -520,6 +566,110 @@ async fn open_rez_env_in_terminal(packages: Vec<String>, state: State<'_, AppSta
     }
 }
 
+#[tauri::command]
+async fn test_mongodb_connection(mongo_uri: String) -> Result<bool, String> {
+    // Mettre à jour l'URI globale si la connexion réussit
+    match ClientOptions::parse(&mongo_uri).await {
+        Ok(options) => {
+            match Client::with_options(options) {
+                Ok(client) => {
+                    // Tester la connexion avec un ping
+                    match client.database("admin").run_command(doc! {"ping": 1}, None).await {
+                        Ok(_) => {
+                            // Connexion réussie, mettre à jour l'URI globale
+                            let mut current_uri = MONGO_URI.lock().unwrap();
+                            *current_uri = mongo_uri;
+                            Ok(true)
+                        },
+                        Err(e) => {
+                            Err(format!("Échec du ping MongoDB: {}", e))
+                        }
+                    }
+                },
+                Err(e) => {
+                    Err(format!("Impossible de créer le client MongoDB: {}", e))
+                }
+            }
+        },
+        Err(e) => {
+            Err(format!("URI MongoDB invalide: {}", e))
+        }
+    }
+}
+
+// Generate an RXT file from a list of packages using the rez env command
+// Returns the content of the RXT file as a string
+async fn generate_rxt_file(packages: &[String], log_state: &LogState) -> Result<String, String> {
+    log_message(log_state, format!("Generating RXT file for packages: {:?}", packages));
+    
+    // Create a temporary file path
+    let temp_dir = std::env::temp_dir();
+    let timestamp = Utc::now().format("%Y%m%d_%H%M%S").to_string();
+    let random_suffix: String = rand::thread_rng()
+        .sample_iter(rand::distributions::Alphanumeric)
+        .take(8)
+        .map(char::from)
+        .collect();
+    
+    let temp_file_path = temp_dir.join(format!("rez_env_{}_{}.rxt", timestamp, random_suffix));
+    let temp_file_path_str = temp_file_path.to_string_lossy().to_string();
+    
+    log_message(log_state, format!("Using temporary file: {}", temp_file_path_str));
+    
+    // Build the rez env command
+    let packages_str = packages.join(" ");
+    let rez_command = format!("rez env {} -o {}", packages_str, temp_file_path_str);
+    log_message(log_state, format!("Executing rez command: {}", rez_command));
+    
+    // Execute the command
+    let output = if cfg!(target_os = "windows") {
+        Command::new("cmd")
+            .arg("/c")
+            .arg(&rez_command)
+            .output()
+    } else {
+        Command::new("sh")
+            .arg("-c")
+            .arg(&rez_command)
+            .output()
+    };
+    
+    // Check if command execution was successful
+    match output {
+        Ok(output) => {
+            if !output.status.success() {
+                let error = String::from_utf8_lossy(&output.stderr).to_string();
+                log_message(log_state, format!("Failed to generate RXT file: {}", error));
+                return Err(format!("Failed to generate RXT file: {}", error));
+            }
+            
+            // Read the content of the generated RXT file
+            match fs::read_to_string(&temp_file_path) {
+                Ok(content) => {
+                    log_message(log_state, format!("Successfully read RXT file (size: {} bytes)", content.len()));
+                    
+                    // Delete the temporary file
+                    if let Err(e) = fs::remove_file(&temp_file_path) {
+                        log_message(log_state, format!("Warning: Failed to delete temporary RXT file: {}", e));
+                    } else {
+                        log_message(log_state, format!("Deleted temporary RXT file: {}", temp_file_path_str));
+                    }
+                    
+                    Ok(content)
+                },
+                Err(e) => {
+                    log_message(log_state, format!("Failed to read RXT file: {}", e));
+                    Err(format!("Failed to read RXT file: {}", e))
+                }
+            }
+        },
+        Err(e) => {
+            log_message(log_state, format!("Failed to execute rez command: {}", e));
+            Err(format!("Failed to execute rez command: {}", e))
+        }
+    }
+}
+
 fn main() {
     let log_file = match init_log_file() {
         Ok(file) => file,
@@ -531,23 +681,53 @@ fn main() {
     let log_state = LogState(Mutex::new(log_file));
 
     let app_state = tauri::async_runtime::block_on(async {
-        let client_options = ClientOptions::parse(MONGO_URI)
-            .await
-            .expect("Failed to parse MongoDB URI");
-        let client = Client::with_options(client_options)
-            .expect("Failed to create MongoDB client");
+        // Récupérer l'URI MongoDB actuelle depuis la variable globale
+        let mongo_uri = MONGO_URI.lock().unwrap().clone();
+        log_message(&log_state, format!("Initializing MongoDB connection with URI: {}", mongo_uri.split('@').next().unwrap_or(&mongo_uri)));
 
-        client
-            .database("admin")
-            .run_command(doc! {"ping": 1}, None)
-            .await
-            .expect("Failed to ping MongoDB");
+        let client_options = match ClientOptions::parse(&mongo_uri).await {
+            Ok(options) => options,
+            Err(e) => {
+                log_message(&log_state, format!("Failed to parse MongoDB URI: {}", e));
+                // Continuer avec l'URI par défaut si l'URI configurée est invalide
+                let default_uri = DEFAULT_MONGO_URI.to_string();
+                log_message(&log_state, format!("Falling back to default URI: {}", default_uri));
 
-        log_message(&log_state, "Connected to MongoDB successfully during init".to_string());
+                ClientOptions::parse(DEFAULT_MONGO_URI)
+                    .await
+                    .expect("Failed to parse default MongoDB URI")
+            }
+        };
+
+        let client = match Client::with_options(client_options) {
+            Ok(client) => client,
+            Err(e) => {
+                log_message(&log_state, format!("Failed to create MongoDB client: {}", e));
+                // Au lieu de planter, on crée un client avec une URI par défaut
+                // qui sera remplacée plus tard par la configuration utilisateur
+                log_message(&log_state, "Creating placeholder MongoDB client - connection will be established later".to_string());
+                Client::with_uri_str(DEFAULT_MONGO_URI)
+                    .await
+                    .expect("Failed to create placeholder MongoDB client")
+            }
+        };
+
+        // Essayer de ping MongoDB, mais ne pas planter si ça échoue
+        match client.database("admin").run_command(doc! {"ping": 1}, None).await {
+            Ok(_) => log_message(&log_state, "Connected to MongoDB successfully during init".to_string()),
+            Err(e) => {
+                log_message(&log_state, format!("Failed to ping MongoDB: {}", e));
+                log_message(&log_state, "Application will start and prompt for MongoDB configuration".to_string());
+                // Ne pas panic! ici - on laisse l'interface s'afficher
+            }
+        }
 
         let db = client.database(DB_NAME);
         let cloned_log_file = log_state.0.lock().unwrap().try_clone().expect("Failed to clone log file handle during init");
         let repo_log_state = LogState(Mutex::new(cloned_log_file));
+
+        // Création d'un repository MongoDB même si la connexion a échoué
+        // Les fonctions individuelles géreront les erreurs de connexion quand elles seront appelées
         let db_repo: Arc<dyn DbRepository> = Arc::new(MongoDbRepository { db, log_state: repo_log_state });
 
         AppState { db_repo, log_state }
@@ -569,7 +749,8 @@ fn main() {
             get_stage_history,
             get_all_stage_names,
             open_tool_in_terminal,
-            open_rez_env_in_terminal
+            open_rez_env_in_terminal,
+            test_mongodb_connection
         ])
         .setup(|_app| {
             Ok(())
