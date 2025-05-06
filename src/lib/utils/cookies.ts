@@ -34,6 +34,6 @@ export function setCookie(name: string, value: string, days: number = 30): void 
  * Delete a cookie by setting its expiration time to the past
  * @param name The name of the cookie to delete
  */
-export async function deleteCookie(name: string): Promise<void> {
+export function deleteCookie(name: string): void {
   document.cookie = name + "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/";
 }
