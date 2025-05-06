@@ -1,4 +1,8 @@
-# rezLauncher
+<div align="center">
+  <img src="src-tauri/icons/title.png" alt="RezLauncher Logo" width="400"/>
+  <br/>
+  <img src="src-tauri/icons/icon.png" alt="RezLauncher Icon" width="150"/>
+</div>
 
 A modern desktop application for managing Rez packages, stages, and tools in production pipelines. Built with Tauri, Svelte, and MongoDB.
 

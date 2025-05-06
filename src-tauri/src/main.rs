@@ -479,6 +479,47 @@ async fn open_tool_in_terminal(tool_name: String, packages: Vec<String>, state: 
     }
 }
 
+#[tauri::command]
+async fn open_rez_env_in_terminal(packages: Vec<String>, state: State<'_, AppState>) -> Result<bool, String> {
+    log_message(&state.log_state, format!("Attempting to open rez environment with packages: {:?}", packages));
+
+    // Construire la commande rez env avec la liste des packages
+    let packages_str = packages.join(" ");
+    let rez_command = format!("rez env {}", packages_str);
+    log_message(&state.log_state, format!("Executing rez command in new terminal: {}", rez_command));
+
+    let mut command = if cfg!(target_os = "windows") {
+        // Sur Windows, utiliser "start cmd" pour ouvrir une nouvelle fenêtre de terminal
+        let mut cmd = std::process::Command::new("cmd");
+        cmd.arg("/c").arg("start").arg("cmd").arg("/k").arg(&rez_command);
+        cmd
+    } else {
+        // Sur Linux/Mac, utiliser xterm ou terminal
+        let terminal_cmd = if std::path::Path::new("/usr/bin/xterm").exists() {
+            "xterm"
+        } else if std::path::Path::new("/usr/bin/gnome-terminal").exists() {
+            "gnome-terminal"
+        } else {
+            "x-terminal-emulator"
+        };
+        
+        let mut cmd = std::process::Command::new(terminal_cmd);
+        cmd.arg("-e").arg(format!("bash -c '{} && bash'", rez_command));
+        cmd
+    };
+
+    match command.spawn() {
+        Ok(_) => {
+            log_message(&state.log_state, format!("Rez environment opened successfully in new terminal with packages: {}", packages_str));
+            Ok(true)
+        },
+        Err(e) => {
+            log_message(&state.log_state, format!("Failed to open rez environment in new terminal: {}", e));
+            Err(format!("Failed to open rez environment in new terminal: {}", e))
+        }
+    }
+}
+
 fn main() {
     let log_file = match init_log_file() {
         Ok(file) => file,
@@ -527,7 +568,8 @@ fn main() {
             revert_stage,
             get_stage_history,
             get_all_stage_names,
-            open_tool_in_terminal
+            open_tool_in_terminal,
+            open_rez_env_in_terminal
         ])
         .setup(|_app| {
             Ok(())

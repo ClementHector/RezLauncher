@@ -281,6 +281,27 @@
           ? { ...stage, loaded: true }
           : { ...stage, loaded: false }
       );
+      
+      // Récupérer les packages pour le stage sélectionné
+      const selectedStage = stages.find(stage => stage.name === stageName);
+      if (selectedStage && selectedStage.from_version) {
+        // Trouver le package collection correspondant au from_version du stage
+        const stagePackage = packageCollections.find(pkg => pkg.version === selectedStage.from_version);
+        if (stagePackage && stagePackage.packages && Array.isArray(stagePackage.packages)) {
+          addLog(`Opening rez environment with ${stagePackage.packages.length} packages from stage "${stageName}"`, "info");
+          
+          // Appeler la fonction Rust pour ouvrir un terminal avec ces packages
+          await invoke("open_rez_env_in_terminal", {
+            packages: stagePackage.packages
+          });
+          
+          addLog(`Rez environment loaded for stage: ${stageName}`, "success");
+        } else {
+          addLog(`No packages found for stage "${stageName}", cannot load rez environment`, "warning");
+        }
+      } else {
+        addLog(`Stage "${stageName}" has no source package version`, "error");
+      }
     } catch (error) {
       addLog(`Error loading stage: ${error}`, "error");
     }
@@ -400,6 +421,34 @@
       }
     } catch (error) {
       addLog(`Error loading tool: ${error}`, "error");
+    }
+  }
+
+  async function loadPackage(packageVersion: string) {
+    try {
+      addLog(`Loading package collection: ${packageVersion}`);
+      packages = packages.map(pkg =>
+        pkg.version === packageVersion
+          ? { ...pkg, loaded: true }
+          : { ...pkg, loaded: false }
+      );
+      
+      // Récupérer les packages pour la collection sélectionnée
+      const selectedPackage = packageCollections.find(pkg => pkg.version === packageVersion);
+      if (selectedPackage && selectedPackage.packages && Array.isArray(selectedPackage.packages)) {
+        addLog(`Opening rez environment with ${selectedPackage.packages.length} packages from package collection "${packageVersion}"`, "info");
+        
+        // Appeler la fonction Rust pour ouvrir un terminal avec ces packages
+        await invoke("open_rez_env_in_terminal", {
+          packages: selectedPackage.packages
+        });
+        
+        addLog(`Rez environment loaded for package collection: ${packageVersion}`, "success");
+      } else {
+        addLog(`No packages found for package collection "${packageVersion}", cannot load rez environment`, "warning");
+      }
+    } catch (error) {
+      addLog(`Error loading package collection: ${error}`, "error");
     }
   }
 
@@ -835,7 +884,7 @@
           hasBakeEdit={true}
           mode={mode}
           emptyMessage={packageCollectionMessage}
-          onLoad={() => {}}
+          onLoad={loadPackage}
           onBake={bakePackage}
           onEdit={createFromPackage}
           onCreate={createNewPackage}
