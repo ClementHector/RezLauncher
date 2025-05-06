@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use chrono::Utc;
 use std::sync::{Arc, Mutex};
 use std::fs::{self, OpenOptions, File};
-use std::io::{Read, Write};
+use std::io::Write;
 use std::process::Command;
 use rand::Rng;
 use tauri::State;
@@ -266,7 +266,7 @@ fn init_log_file() -> Result<File, String> {
     let temp_dir = std::env::temp_dir();
     let log_dir = temp_dir.join("rezlauncher_logs");
 
-    if (!log_dir.exists()) {
+    if !log_dir.exists() {
         std::fs::create_dir_all(&log_dir).map_err(|e| e.to_string())?;
     }
 
