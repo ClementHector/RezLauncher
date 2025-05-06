@@ -287,25 +287,41 @@
           : { ...stage, loaded: false }
       );
 
-      // Récupérer les packages pour le stage sélectionné
+      // Get the selected stage
       const selectedStage = stages.find(stage => stage.name === stageName);
-      if (selectedStage && selectedStage.from_version) {
-        // Trouver le package collection correspondant au from_version du stage
-        const stagePackage = packageCollections.find(pkg => pkg.version === selectedStage.from_version);
-        if (stagePackage && stagePackage.packages && Array.isArray(stagePackage.packages)) {
-          addLog(`Opening rez environment with ${stagePackage.packages.length} packages from stage "${stageName}"`, "info");
-
-          // Appeler la fonction Rust pour ouvrir un terminal avec ces packages
-          await invoke("open_rez_env_in_terminal", {
-            packages: stagePackage.packages
-          });
-
-          addLog(`Rez environment loaded for stage: ${stageName}`, "success");
+      if (selectedStage && selectedStage.id) {
+        addLog(`Opening rez environment for stage "${stageName}" using RXT file`, "info");
+        
+        // Extract the MongoDB ObjectId string correctly
+        // Handle different possible formats of the ObjectId
+        let stageIdString;
+        
+        if (typeof selectedStage.id === 'string') {
+          // If already a string, use it directly
+          stageIdString = selectedStage.id;
+        } else if (selectedStage.id.$oid) {
+          // MongoDB ObjectId in JSON format: { $oid: "hexstring" }
+          stageIdString = selectedStage.id.$oid;
+        } else if (selectedStage.id.toString && typeof selectedStage.id.toString === 'function' && 
+                  selectedStage.id.toString() !== '[object Object]') {
+          // If it has a custom toString method (MongoDB ObjectId object)
+          stageIdString = selectedStage.id.toString();
         } else {
-          addLog(`No packages found for stage "${stageName}", cannot load rez environment`, "warning");
+          // Add debugging information
+          addLog(`Stage ID has unexpected format: ${JSON.stringify(selectedStage.id)}`, "warning");
+          throw new Error(`Cannot extract valid ID from stage object: ${JSON.stringify(selectedStage.id)}`);
         }
+        
+        addLog(`Using stage ID: ${stageIdString}`, "info");
+        
+        // Call the Rust function to load the stage using its RXT content
+        await invoke("load_stage_by_id", {
+          stageId: stageIdString
+        });
+        
+        addLog(`Rez environment loaded for stage: ${stageName}`, "success");
       } else {
-        addLog(`Stage "${stageName}" has no source package version`, "error");
+        addLog(`Stage "${stageName}" not found or has no ID`, "error");
       }
     } catch (error) {
       addLog(`Error loading stage: ${error}`, "error");
@@ -627,6 +643,7 @@
 
       if (Array.isArray(stagesData) && stagesData.length > 0) {
         stages = stagesData.map(stage => ({
+          id: stage._id, // Ajout de l'ID du stage
           name: stage.name,
           loaded: false,
           uri: stage.uri,
