@@ -23,7 +23,7 @@ export function getCookie(name: string): string | null {
  * @param value The value to store
  * @param days Number of days before cookie expires
  */
-export async function setCookie(name: string, value: string, days: number = 30): Promise<void> {
+export function setCookie(name: string, value: string, days: number = 30): void {
   const date = new Date();
   date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
   const expires = "expires=" + date.toUTCString();
