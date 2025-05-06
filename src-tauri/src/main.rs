@@ -74,9 +74,6 @@ impl MongoDbRepository {
         {
             let doc_count = documents.len();
             log_message(&self.log_state, format!("{}: {} documents retrieved.", log_msg_prefix, doc_count));
-            if doc_count < 5 {
-                 log_message(&self.log_state, format!("First few documents: {:?}", documents.iter().take(5).collect::<Vec<_>>()));
-            }
         }
         #[cfg(not(debug_assertions))]
         log_message(&self.log_state, format!("{}: {}", log_msg_prefix, documents.len()));
@@ -355,7 +352,7 @@ async fn save_stage_to_mongodb(
     let mut stage_to_insert = stage_data.clone();
     stage_to_insert.active = true;
     stage_to_insert.rxt = rxt_content;
-    
+
     state.db_repo.insert_stage(stage_to_insert).await?;
 
     log_message(
@@ -601,7 +598,7 @@ async fn test_mongodb_connection(mongo_uri: String) -> Result<bool, String> {
 // Returns the content of the RXT file as a string
 async fn generate_rxt_file(packages: &[String], log_state: &LogState) -> Result<String, String> {
     log_message(log_state, format!("Generating RXT file for packages: {:?}", packages));
-    
+
     // Create a temporary file path
     let temp_dir = std::env::temp_dir();
     let timestamp = Utc::now().format("%Y%m%d_%H%M%S").to_string();
@@ -610,17 +607,17 @@ async fn generate_rxt_file(packages: &[String], log_state: &LogState) -> Result<
         .take(8)
         .map(char::from)
         .collect();
-    
+
     let temp_file_path = temp_dir.join(format!("rez_env_{}_{}.rxt", timestamp, random_suffix));
     let temp_file_path_str = temp_file_path.to_string_lossy().to_string();
-    
+
     log_message(log_state, format!("Using temporary file: {}", temp_file_path_str));
-    
+
     // Build the rez env command
     let packages_str = packages.join(" ");
     let rez_command = format!("rez env {} -o {}", packages_str, temp_file_path_str);
     log_message(log_state, format!("Executing rez command: {}", rez_command));
-    
+
     // Execute the command
     let output = if cfg!(target_os = "windows") {
         Command::new("cmd")
@@ -633,7 +630,7 @@ async fn generate_rxt_file(packages: &[String], log_state: &LogState) -> Result<
             .arg(&rez_command)
             .output()
     };
-    
+
     // Check if command execution was successful
     match output {
         Ok(output) => {
@@ -642,19 +639,19 @@ async fn generate_rxt_file(packages: &[String], log_state: &LogState) -> Result<
                 log_message(log_state, format!("Failed to generate RXT file: {}", error));
                 return Err(format!("Failed to generate RXT file: {}", error));
             }
-            
+
             // Read the content of the generated RXT file
             match fs::read_to_string(&temp_file_path) {
                 Ok(content) => {
                     log_message(log_state, format!("Successfully read RXT file (size: {} bytes)", content.len()));
-                    
+
                     // Delete the temporary file
                     if let Err(e) = fs::remove_file(&temp_file_path) {
                         log_message(log_state, format!("Warning: Failed to delete temporary RXT file: {}", e));
                     } else {
                         log_message(log_state, format!("Deleted temporary RXT file: {}", temp_file_path_str));
                     }
-                    
+
                     Ok(content)
                 },
                 Err(e) => {
@@ -666,6 +663,85 @@ async fn generate_rxt_file(packages: &[String], log_state: &LogState) -> Result<
         Err(e) => {
             log_message(log_state, format!("Failed to execute rez command: {}", e));
             Err(format!("Failed to execute rez command: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
+async fn load_stage_by_id(
+    stage_id: String,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    // Parse the ObjectId
+    let object_id = ObjectId::parse_str(&stage_id).map_err(|e| e.to_string())?;
+
+    // Find the stage by ID
+    let stage = state.db_repo.find_stage_by_id(object_id).await?
+        .ok_or_else(|| "Stage not found".to_string())?;
+
+    log_message(
+        &state.log_state,
+        format!("Loading stage '{}' with ID '{}'", stage.name, stage_id)
+    );
+
+    if stage.rxt.is_empty() {
+        return Err("Stage has no RXT content".to_string());
+    }
+
+    // Create a temporary file for the RXT content
+    let temp_dir = std::env::temp_dir();
+    let timestamp = Utc::now().format("%Y%m%d_%H%M%S").to_string();
+    let random_suffix: String = rand::thread_rng()
+        .sample_iter(rand::distributions::Alphanumeric)
+        .take(8)
+        .map(char::from)
+        .collect();
+
+    let temp_file_path = temp_dir.join(format!("rez_stage_{}_{}.rxt", timestamp, random_suffix));
+    let temp_file_path_str = temp_file_path.to_string_lossy().to_string();
+
+    log_message(&state.log_state, format!("Saving RXT content to temporary file: {}", temp_file_path_str));
+
+    // Write the RXT content to the temporary file
+    fs::write(&temp_file_path, &stage.rxt)
+        .map_err(|e| format!("Failed to write RXT content to file: {}", e))?;
+
+    // Build the rez command to load the RXT environment
+    let rez_command = format!("rez env -i {}", temp_file_path_str);
+    log_message(&state.log_state, format!("Executing rez command: {}", rez_command));
+
+    // Execute the command in a new terminal
+    let mut command = if cfg!(target_os = "windows") {
+        let mut cmd = std::process::Command::new("cmd");
+        cmd.arg("/c").arg("start").arg("cmd").arg("/k").arg(&rez_command);
+        cmd
+    } else {
+        // On Linux/Mac, use xterm or terminal
+        let terminal_cmd = if std::path::Path::new("/usr/bin/xterm").exists() {
+            "xterm"
+        } else if std::path::Path::new("/usr/bin/gnome-terminal").exists() {
+            "gnome-terminal"
+        } else {
+            "x-terminal-emulator"
+        };
+
+        let mut cmd = std::process::Command::new(terminal_cmd);
+        cmd.arg("-e").arg(format!("bash -c '{} && bash'", rez_command));
+        cmd
+    };
+
+    match command.spawn() {
+        Ok(_) => {
+            log_message(
+                &state.log_state,
+                format!("Rez environment loaded successfully for stage '{}' using RXT file", stage.name)
+            );
+            Ok(true)
+        },
+        Err(e) => {
+            let error_msg = format!("Failed to launch rez environment: {}", e);
+            log_message(&state.log_state, error_msg.clone());
+            Err(error_msg)
         }
     }
 }
@@ -750,7 +826,8 @@ fn main() {
             get_all_stage_names,
             open_tool_in_terminal,
             open_rez_env_in_terminal,
-            test_mongodb_connection
+            test_mongodb_connection,
+            load_stage_by_id
         ])
         .setup(|_app| {
             Ok(())
