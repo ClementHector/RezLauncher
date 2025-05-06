@@ -10,15 +10,11 @@ use std::fs::{OpenOptions, File};
 use std::io::Write;
 use tauri::State;
 use futures::stream::StreamExt;
-// Remove conditional import
-// #[cfg(test)]
-// use mockall::automock;
 
-// Application constants
-const DB_NAME: &str = "rez_launcher";
+// Configuration de MongoDB
 const MONGO_URI: &str = "mongodb://localhost:27017";
+const DB_NAME: &str = "rez_launcher";
 
-// Use full path in cfg_attr
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
 trait DbRepository: Send + Sync {
@@ -35,19 +31,16 @@ trait DbRepository: Send + Sync {
     async fn find_distinct_stage_names(&self) -> Result<Vec<String>, String>;
 }
 
-// --- MongoDB Implementation ---
 struct MongoDbRepository {
     db: Database,
-    log_state: LogState, // Keep log state for logging within the repo
+    log_state: LogState,
 }
 
 impl MongoDbRepository {
-    // Helper to get a specific collection
     fn get_collection<T>(&self, name: &str) -> Collection<T> {
         self.db.collection::<T>(name)
     }
 
-    // Reusable document fetching logic, now part of the concrete implementation
     async fn fetch_documents_internal<T>(
         &self,
         collection_name: &str,
@@ -207,16 +200,13 @@ impl DbRepository for MongoDbRepository {
     }
 }
 
-// App state for logging
 struct LogState(Mutex<File>);
 
-// Add Repository State
 struct AppState {
     db_repo: Arc<dyn DbRepository>,
-    log_state: LogState, // Keep LogState accessible if needed directly by commands/setup
+    log_state: LogState,
 }
 
-// Data structures
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct PackageCollection {
     version: String,
@@ -249,7 +239,6 @@ struct PackageCollectionResult {
     collections: Option<Vec<PackageCollection>>,
 }
 
-// Utility functions
 fn log_message(log_state: &LogState, message: String) {
     let mut log_file = match log_state.0.lock() {
         Ok(file) => file,
@@ -274,7 +263,6 @@ fn init_log_file() -> Result<File, String> {
     let temp_dir = std::env::temp_dir();
     let log_dir = temp_dir.join("rezlauncher_logs");
 
-    // Remove unnecessary parentheses again
     if !log_dir.exists() {
         std::fs::create_dir_all(&log_dir).map_err(|e| e.to_string())?;
     }
@@ -290,11 +278,8 @@ fn init_log_file() -> Result<File, String> {
         .map_err(|e| format!("Failed to open log file: {}", e))
 }
 
-// Tauri commands
 #[tauri::command]
 async fn init_command() -> Result<bool, String> {
-    // This command might become redundant or just return true
-    // Initialization happens in main/setup now
     Ok(true)
 }
 
@@ -316,7 +301,6 @@ async fn save_stage_to_mongodb(
     stage_data: Stage,
     state: State<'_, AppState>,
 ) -> Result<bool, String> {
-    // First, update all existing stages with the same name to set active = false
     state.db_repo.update_stages_active_status(&stage_data.name, &stage_data.uri, false).await?;
 
     log_message(
@@ -324,9 +308,8 @@ async fn save_stage_to_mongodb(
         format!("Set active=false for all existing stages with name '{}' via repository", stage_data.name)
     );
 
-    // Now insert the new stage (ensure it's marked active)
     let mut stage_to_insert = stage_data.clone();
-    stage_to_insert.active = true; // Ensure the new stage is active
+    stage_to_insert.active = true;
     state.db_repo.insert_stage(stage_to_insert).await?;
 
     log_message(
@@ -342,10 +325,8 @@ async fn get_package_collections_by_uri(
     uri: String,
     state: State<'_, AppState>,
 ) -> Result<PackageCollectionResult, String> {
-    // Call the repository method
     let packages = state.db_repo.find_package_collections_by_uri(&uri).await?;
 
-    // Construct the result object
     if packages.is_empty() {
         Ok(PackageCollectionResult {
             success: true,
@@ -365,10 +346,8 @@ async fn get_package_collections_by_uri(
 async fn get_all_package_collections(
     state: State<'_, AppState>,
 ) -> Result<PackageCollectionResult, String> {
-     // Call the repository method
     let packages = state.db_repo.find_all_package_collections().await?;
 
-    // Construct the result object
     if packages.is_empty() {
         Ok(PackageCollectionResult {
             success: true,
@@ -418,7 +397,6 @@ async fn revert_stage(
 ) -> Result<bool, String> {
     let object_id = ObjectId::parse_str(&stage_id).map_err(|e| e.to_string())?;
 
-    // Find the stage to activate
     let stage_to_activate = state.db_repo.find_stage_by_id(object_id).await?
         .ok_or_else(|| "Stage not found".to_string())?;
 
@@ -430,7 +408,6 @@ async fn revert_stage(
         format!("Reverting stage '{}' with URI '{}' via repository", stage_name, stage_uri)
     );
 
-    // Set all stages with the same name/uri to inactive
     state.db_repo.update_stages_active_status(&stage_name, &stage_uri, false).await?;
 
     log_message(
@@ -438,7 +415,6 @@ async fn revert_stage(
         format!("Set active=false for all existing stages with name '{}' via repository", stage_name)
     );
 
-    // Set the selected stage to active
     state.db_repo.update_stage_active_status_by_id(object_id, true).await?;
 
     log_message(
@@ -460,7 +436,6 @@ async fn get_stage_history(
 
 #[tauri::command]
 fn get_current_username() -> Result<String, String> {
-    // No change needed
     std::env::var("USERNAME")
         .or_else(|_| std::env::var("USER"))
         .map_err(|e| format!("Failed to get username: {}", e))
@@ -473,6 +448,37 @@ async fn get_all_stage_names(
     state.db_repo.find_distinct_stage_names().await
 }
 
+#[tauri::command]
+async fn open_tool_in_terminal(tool_name: String, packages: Vec<String>, state: State<'_, AppState>) -> Result<bool, String> {
+    log_message(&state.log_state, format!("Attempting to open tool: {} with packages: {:?}", tool_name, packages));
+
+    // Construire la commande rez env avec la liste des packages
+    let packages_str = packages.join(" ");
+    let rez_command = format!("rez env {} -- {}", packages_str, tool_name);
+    log_message(&state.log_state, format!("Executing rez command: {}", rez_command));
+
+    let mut command = if cfg!(target_os = "windows") {
+        let mut cmd = std::process::Command::new("cmd");
+        cmd.arg("/c").arg(&rez_command);
+        cmd
+    } else {
+        let mut cmd = std::process::Command::new("sh");
+        cmd.arg("-c").arg(&rez_command);
+        cmd
+    };
+
+    match command.spawn() {
+        Ok(_) => {
+            log_message(&state.log_state, format!("Tool launched successfully in rez environment: {}", tool_name));
+            Ok(true)
+        },
+        Err(e) => {
+            log_message(&state.log_state, format!("Failed to launch tool in rez environment: {}", e));
+            Err(format!("Failed to launch tool in rez environment: {}", e))
+        }
+    }
+}
+
 fn main() {
     let log_file = match init_log_file() {
         Ok(file) => file,
@@ -483,20 +489,18 @@ fn main() {
     };
     let log_state = LogState(Mutex::new(log_file));
 
-    // Create the AppState - requires async context for DB connection
     let app_state = tauri::async_runtime::block_on(async {
         let client_options = ClientOptions::parse(MONGO_URI)
             .await
-            .expect("Failed to parse MongoDB URI"); // Handle error better in real app
+            .expect("Failed to parse MongoDB URI");
         let client = Client::with_options(client_options)
-            .expect("Failed to create MongoDB client"); // Handle error better
+            .expect("Failed to create MongoDB client");
 
-        // Verify connection
         client
             .database("admin")
             .run_command(doc! {"ping": 1}, None)
             .await
-            .expect("Failed to ping MongoDB"); // Handle error better
+            .expect("Failed to ping MongoDB");
 
         log_message(&log_state, "Connected to MongoDB successfully during init".to_string());
 
@@ -510,13 +514,11 @@ fn main() {
 
 
     tauri::Builder::default()
-        .manage(app_state) // Manage the combined AppState
+        .manage(app_state)
         .invoke_handler(tauri::generate_handler![
-            // init_mongodb, // Removed, init happens above
-            init_command, // Keep or remove if setup is enough
+            init_command,
             save_package_collection,
             save_stage_to_mongodb,
-            // get_package_collections, // Removed
             get_package_collections_by_uri,
             get_current_username,
             get_all_package_collections,
@@ -524,32 +526,25 @@ fn main() {
             get_stages_by_uri,
             revert_stage,
             get_stage_history,
-            get_all_stage_names
+            get_all_stage_names,
+            open_tool_in_terminal
         ])
         .setup(|_app| {
-            // Setup logic can remain if needed for other things,
-            // but DB init is now done before builder
             Ok(())
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
 
-// --- Unit Tests ---
 #[cfg(test)]
 mod tests {
     use super::*;
     use mockall::predicate::*;
-    // Keep import from super
     use super::MockDbRepository;
-    // use mongodb::Database; // No longer needed directly
     use rand::{distributions::Alphanumeric, Rng};
     use std::fs;
     use std::path::PathBuf;
     use std::collections::HashSet;
-
-    // --- Test Helpers ---
-    // Remove setup_test_db, TEST_MONGO_URI, TEST_DB_NAME
 
     fn generate_random_suffix(len: usize) -> String {
         rand::thread_rng()
@@ -559,7 +554,6 @@ mod tests {
             .collect()
     }
 
-    // Helper to create a dummy LogState for tests (can be simplified if logging isn't asserted)
     fn create_test_log_state() -> (LogState, PathBuf) {
         let unique_suffix = generate_random_suffix(8);
         let log_file_name = format!("test_log_{}.log", unique_suffix);
@@ -574,10 +568,7 @@ mod tests {
         (LogState(Mutex::new(log_file)), log_path)
     }
 
-
-    // Helper to create a dummy PackageCollection
     fn create_dummy_package_collection(version: &str, uri: &str) -> PackageCollection {
-        // ... (keep implementation as is)
         PackageCollection {
             version: version.to_string(),
             packages: vec!["pkg1".to_string(), "pkg2".to_string()],
@@ -588,25 +579,6 @@ mod tests {
             uri: uri.to_string(),
         }
     }
-
-    // Helper to create a dummy Stage
-    /*
-    fn create_dummy_stage(name: &str, uri: &str, version: &str, active: bool) -> Stage {
-         Stage {
-            id: Some(ObjectId::new()), // Give it an ID for tests involving IDs
-            name: name.to_string(),
-            uri: uri.to_string(),
-            from_version: version.to_string(),
-            rxt_path: format!("/path/to/{}.rxt", name),
-            tools: vec!["toolC".to_string(), "toolD".to_string()],
-            created_at: Utc::now().to_rfc3339(),
-            created_by: "test_user".to_string(),
-            active: active,
-        }
-    }
-    */
-
-    // --- Test Cases (Rewritten with Mocks) ---
 
     #[tokio::test]
     async fn test_get_package_collections_by_uri_found() {
@@ -621,14 +593,12 @@ mod tests {
             .times(1)
             .returning(move |_| Ok(expected_packages.clone()));
 
-        // Create AppState with the mock
         let (log_state, _log_path) = create_test_log_state();
         let app_state = AppState {
             db_repo: Arc::new(mock_repo),
             log_state,
         };
 
-        // Call the repository method directly via the AppState
         let result = app_state.db_repo.find_package_collections_by_uri(uri1).await;
 
         assert!(result.is_ok());
@@ -637,7 +607,6 @@ mod tests {
         assert!(collections.contains(&pkg1));
         assert!(collections.contains(&pkg2));
 
-        // Clean up log file
         let _ = fs::remove_file(_log_path);
     }
 
@@ -658,14 +627,12 @@ mod tests {
             log_state,
         };
 
-        // Call the repository method directly
         let result = app_state.db_repo.find_package_collections_by_uri(non_existent_uri).await;
 
         assert!(result.is_ok());
         let collections = result.unwrap();
         assert!(collections.is_empty());
 
-        // Clean up log file
         let _ = fs::remove_file(_log_path);
     }
 
@@ -686,13 +653,11 @@ mod tests {
              log_state,
          };
 
-         // Call the repository method directly
          let result = app_state.db_repo.find_package_collections_by_uri(uri).await;
 
          assert!(result.is_err());
          assert_eq!(result.err().unwrap(), "Database connection failed");
 
-         // Clean up log file
          let _ = fs::remove_file(_log_path);
      }
 
@@ -717,7 +682,6 @@ mod tests {
             log_state,
         };
 
-        // Call the repository method directly
         let result = app_state.db_repo.find_all_package_collections().await;
 
         assert!(result.is_ok());
@@ -727,7 +691,6 @@ mod tests {
         assert!(collections.contains(&pkg2));
         assert!(collections.contains(&pkg3));
 
-        // Clean up log file
         let _ = fs::remove_file(_log_path);
     }
 
@@ -746,30 +709,26 @@ mod tests {
              log_state,
          };
 
-         // Call the repository method directly
          let result = app_state.db_repo.find_all_package_collections().await;
 
          assert!(result.is_ok());
          let collections = result.unwrap();
          assert!(collections.is_empty());
 
-         // Clean up log file
          let _ = fs::remove_file(_log_path);
     }
 
-    // Test logging by calling a function that uses the repo and logs
     #[tokio::test]
     async fn test_logging_writes_to_file_via_repo_call() {
         let uri = "test/uri/log";
         let pkg_to_save = create_dummy_package_collection("log_pkg", uri);
-        // Remove unused clone: let pkg_clone = pkg_to_save.clone();
 
         let (log_state, log_path) = create_test_log_state();
-        let log_path_clone = log_path.clone(); // Clone for cleanup
+        let log_path_clone = log_path.clone();
 
         let mut mock_repo = MockDbRepository::new();
         mock_repo.expect_insert_package_collection()
-            .with(eq(pkg_to_save.clone())) // Ensure correct data is passed
+            .with(eq(pkg_to_save.clone()))
             .times(1)
             .returning(|_| Ok(()));
 
@@ -778,32 +737,9 @@ mod tests {
             log_state,
         };
 
-        // Call the command function which contains the logging
-        // We still need to simulate the State for the command function itself
-        // Let's rethink this - maybe test log_message directly?
-        // Or keep calling the command but handle State creation differently?
-
-        // Alternative: Test the logging within the repository implementation itself?
-        // No, the logging happens in the command *after* the repo call.
-
-        // Let's try calling the command but creating a dummy State.
-        // This requires careful handling of lifetimes, might not be straightforward.
-
-        // Simplest approach for now: Assume log_message works and test repo interaction.
-        // If logging *must* be tested via commands, more complex test setup is needed.
-
-        // Let's call the repo method directly and skip testing the command's logging for now.
         let result = app_state.db_repo.insert_package_collection(pkg_to_save).await;
         assert!(result.is_ok());
 
-        // We can't easily assert the log message written by the *command* here.
-        // To test command logging, we'd need to mock `log_message` or inspect the file
-        // after calling the command (which requires mocking State).
-
-        // For now, this test verifies the repo interaction.
-        // We'll remove the log file check part.
-
-        // Clean up
         let _ = fs::remove_file(log_path_clone);
     }
 
@@ -824,7 +760,6 @@ mod tests {
             log_state,
         };
 
-        // Call the repository method directly
         let result = app_state.db_repo.find_distinct_stage_names().await;
 
         assert!(result.is_ok(), "find_distinct_stage_names failed: {:?}", result.err());
@@ -836,7 +771,6 @@ mod tests {
         assert_eq!(actual_set.len(), 3, "Incorrect number of unique names returned");
         assert_eq!(actual_set, expected_set, "Returned names do not match expected unique names");
 
-        // Clean up log file
         let _ = fs::remove_file(_log_path);
     }
 
@@ -856,17 +790,12 @@ mod tests {
             log_state,
         };
 
-        // Call the repository method directly
         let result = app_state.db_repo.find_distinct_stage_names().await;
 
         assert!(result.is_ok(), "find_distinct_stage_names failed: {:?}", result.err());
         let names = result.unwrap();
         assert!(names.is_empty(), "Expected empty vector for empty database, got: {:?}", names);
 
-        // Clean up log file
         let _ = fs::remove_file(_log_path);
     }
-
-    // ... Add more tests for other repository interactions ...
-
 }

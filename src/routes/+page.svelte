@@ -42,7 +42,6 @@
     [key: string]: any;
   };
 
-  // Navigation state
   let currentUri = $state("");
   let projectSelection = $state("select");
   let modelingSelection = $state("select");
@@ -51,14 +50,11 @@
   let showModelingCombobox = $state(false);
   let showApplicationCombobox = $state(false);
 
-  // Add option state
   let isAddingProjectOption = $state(false);
   let isAddingModelingOption = $state(false);
   let isAddingApplicationOption = $state(false);
   let newOptionText = $state("");
 
-  // Content data
-  // Define Stage type
   type Stage = {
     name: string;
     loaded?: boolean;
@@ -73,19 +69,16 @@
   let activePackage = $state<string | null>(null);
   let activeStage = $state<string | null>(null);
   let packages = $state<Package[]>([]);
-  // Define the Tool type to accurately represent tools array elements
   type Tool = string | { name: string; loaded?: boolean; [key: string]: any };
   let tools = $state<Tool[]>([]);
   let applicationDropdownOpen = $state(false);
 
-  // Other variables
   let projectDropdownOpen = $state(false);
   let modelingDropdownOpen = $state(false);
   let projectOptions = $state<string[]>(["select"]);
   let modelingOptions = $state<string[]>(["select"]);
   let applicationOptions = $state<string[]>(["select"]);
 
-  // Build URI based on current selections
   function buildCurrentUri() {
     if (projectSelection === "select") return "";
 
@@ -98,7 +91,6 @@
     }
   }
 
-  // Dropdown management
   function toggleDropdown(dropdownName: string) {
     projectDropdownOpen = dropdownName === 'project' ? !projectDropdownOpen : false;
     modelingDropdownOpen = dropdownName === 'modeling' ? !modelingDropdownOpen : false;
@@ -128,10 +120,9 @@
     }
     addLog(`Selected ${dropdownName}: ${option}`);
 
-    // Reset active selections and tools BEFORE fetching new data
     activeStage = null;
     activePackage = null;
-    tools = []; // Clear tools
+    tools = [];
 
     fetchPackageCollectionsByUri();
     fetchStagesByUri();
@@ -201,7 +192,6 @@
     newOptionText = "";
   }
 
-  // UI Actions
   function toggleDarkMode() {
     theme = theme === "Light" ? "Dark" : "Light";
   }
@@ -283,7 +273,6 @@
     }
   }
 
-  // Button actions
   async function loadStage(stageName: string) {
     try {
       addLog(`Loading stage: ${stageName}`);
@@ -325,7 +314,6 @@
 
     if (success) {
       addLog(`Successfully reverted stage: ${stageName}`, "success");
-      // Refresh stages to show the newly active stage
       await fetchStagesByUri();
     } else {
       addLog(`Failed to revert stage: ${event.detail.error}`, "error");
@@ -364,13 +352,52 @@
   async function loadTool(toolName: string) {
     try {
       addLog(`Loading tool: ${toolName}`);
+
       tools = tools.map(tool => {
-        // Handle both string tools and object tools
         const name = typeof tool === 'string' ? tool : tool.name;
         return name === toolName
           ? typeof tool === 'string' ? { name: tool, loaded: true } : { ...tool, loaded: true }
           : typeof tool === 'string' ? tool : { ...tool, loaded: false };
       });
+
+      if (toolName && !toolName.includes("No tools")) {
+        addLog(`Launching tool in terminal: ${toolName}`, "info");
+
+        // Récupérer la liste des packages en fonction de la sélection actuelle
+        let packages: string[] = [];
+
+        if (activeStage) {
+          // Si un stage est sélectionné, récupérer ses packages
+          const selectedStage = stages.find(stage => stage.name === activeStage);
+          if (selectedStage && selectedStage.from_version) {
+            // Trouver le package collection correspondant au from_version du stage
+            const stagePackage = packageCollections.find(pkg => pkg.version === selectedStage.from_version);
+            if (stagePackage && stagePackage.packages && Array.isArray(stagePackage.packages)) {
+              packages = stagePackage.packages;
+              addLog(`Using ${packages.length} packages from stage "${activeStage}"`, "info");
+            } else {
+              addLog(`No packages found for stage "${activeStage}", using empty package list`, "warning");
+            }
+          }
+        } else if (activePackage) {
+          // Si un package collection est sélectionné, récupérer ses packages
+          const selectedPackage = packageCollections.find(pkg => pkg.version === activePackage);
+          if (selectedPackage && selectedPackage.packages && Array.isArray(selectedPackage.packages)) {
+            packages = selectedPackage.packages;
+            addLog(`Using ${packages.length} packages from package collection "${activePackage}"`, "info");
+          } else {
+            addLog(`No packages found for package collection "${activePackage}", using empty package list`, "warning");
+          }
+        }
+
+        // Appeler la fonction Tauri en passant la liste des packages
+        await invoke("open_tool_in_terminal", {
+          toolName: toolName,
+          packages: packages
+        });
+
+        addLog(`Tool ${toolName} launched successfully in terminal with ${packages.length} packages`, "success");
+      }
     } catch (error) {
       addLog(`Error loading tool: ${error}`, "error");
     }
@@ -445,7 +472,6 @@
     fetchStagesByUri();
   }
 
-  // Data fetching functions
   async function fetchCurrentUsername() {
     try {
       const username = await invoke("get_current_username");
@@ -473,9 +499,9 @@
           packageCollections = result.collections;
           packages = packageCollections.map(collection => ({
             version: collection.version,
-            baked: false, // Assuming baked is not the active state indicator
+            baked: false,
             uri: collection.uri,
-            active: false // Ensure active is false
+            active: false
           }));
           packageCollectionMessage = "";
           addLog(`Found ${packageCollections.length} package collections for ${currentUri}`, "success");
@@ -488,17 +514,16 @@
       } else {
         addLog(`Error fetching package collections: ${result.message}`, "error");
         packageCollectionMessage = `Error: ${result.message}`;
-        packageCollections = []; // Clear on error
-        packages = []; // Clear on error
+        packageCollections = [];
+        packages = [];
       }
-      // Reset activePackage state variable
       activePackage = null;
     } catch (error) {
       addLog(`Error fetching package collections: ${error}`, "error");
       packageCollectionMessage = `Error: ${error}`;
-      packageCollections = []; // Clear on error
-      packages = []; // Clear on error
-      activePackage = null; // Reset on error too
+      packageCollections = [];
+      packages = [];
+      activePackage = null;
     }
   }
 
@@ -554,7 +579,7 @@
           from_version: stage.from_version,
           rxt_path: stage.rxt_path,
           tools: stage.tools,
-          active: false // Ensure active is false
+          active: false
         }));
         stageMessage = "";
         addLog(`Found ${stages.length} stages for ${currentUri}`, "success");
@@ -563,13 +588,12 @@
         stageMessage = `No ${showActiveOnly ? 'active ' : ''}stages found for ${currentUri}`;
         addLog(`No ${showActiveOnly ? 'active ' : ''}stages found for ${currentUri}`, "warning");
       }
-      // Reset activeStage state variable
       activeStage = null;
     } catch (error) {
       addLog(`Error fetching stages: ${error}`, "error");
       stages = [];
       stageMessage = `Error: ${error}`;
-      activeStage = null; // Reset on error too
+      activeStage = null;
     }
   }
 
@@ -592,7 +616,6 @@
     await fetchStagesByUri();
   }
 
-  // Initialize the application
   async function initApp() {
     await fetchCurrentUsername();
     await fetchAllUrisAndUpdateOptions();
