@@ -5,11 +5,9 @@ on:
     workflows: ["Test"]
     types:
       - completed
+  push:
     branches:
       - main
-  push:
-    tags:
-      - 'v*'
 
 permissions:
   contents: write
