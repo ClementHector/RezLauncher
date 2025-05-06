@@ -1,4 +1,4 @@
-name: Build Tauri App
+name: Build Application
 
 on:
   workflow_run:
