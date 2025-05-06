@@ -3,7 +3,7 @@
  * @param name The name of the cookie to retrieve
  * @returns The cookie value or null if not found
  */
-export async function getCookie(name: string): Promise<string | null> {
+export function getCookie(name: string): string | null {
   const cookieStr = document.cookie;
   const cookies = cookieStr.split(';');
   
