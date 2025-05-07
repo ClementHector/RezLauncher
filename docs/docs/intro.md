@@ -1,13 +1,11 @@
 ---
 sidebar_position: 1
-title: Introduction
 ---
 
-<div align="center">
-  <img src="/img/title.png" alt="RezLauncher Logo" width="400"/>
-  <br/>
-  <img src="/img/icon.png" alt="RezLauncher Icon" width="150"/>
-</div>
+# Introduction to RezLauncher
+
+RezLauncher is an application designed to simplify and streamline your workflows when working with Rez packages. This documentation will guide you through installation, usage, and development of RezLauncher.
+
 
 RezLauncher is a modern desktop application designed to simplify the management and launching of software environments powered by the Rez package manager. It provides a user-friendly interface to configure, version, and deploy collections of software packages (stages) and their associated tools.
 
