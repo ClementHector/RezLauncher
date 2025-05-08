@@ -22,6 +22,10 @@ A modern desktop application to launch applications and manage environments with
 
 RezLauncher is a desktop application designed to simplify the management and launching of software environments powered by the Rez package manager. It provides a user-friendly interface to configure, version, and deploy collections of software packages (stages) and their associated tools.
 
+<div align="center">
+  <img src="docs/static/img/screenshot/launcher.png" alt="RezLauncher Icon"/>
+</div>
+
 ## Key Features
 
 - **MongoDB Integration**: Connect to a MongoDB instance to store and retrieve package and stage configurations.
